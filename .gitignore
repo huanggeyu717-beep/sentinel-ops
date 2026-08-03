@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+.env
+.llm-cache/
+pgdata/
+.DS_Store
+
+# 测试与工具产物
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
