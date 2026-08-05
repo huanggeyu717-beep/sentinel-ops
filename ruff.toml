@@ -1,0 +1,33 @@
+# 仓库唯一的 ruff 配置。
+# 显式声明规则集, 不依赖 ruff 的"默认规则" —— 默认集会随版本变化,
+# 曾导致本机绿、CI 红 (见 docs/进度与交接.md 的 W1 收尾记录)。
+line-length = 100
+target-version = "py312"
+extend-exclude = ["legacy", "apps/web"]
+
+[lint]
+select = [
+  "E",   # pycodestyle 错误 (含 E501 行宽、E402 导入位置)
+  "W",   # pycodestyle 警告
+  "F",   # pyflakes: 未使用导入/变量、未定义名字
+  "I",   # isort: 导入排序
+  "UP",  # pyupgrade: 用新语法替换过时写法
+  "B",   # flake8-bugbear: 常见陷阱
+  "SIM", # flake8-simplify: 可简化的写法
+  "RUF", # ruff 自有规则
+]
+
+ignore = [
+  # 本仓库注释/文档字符串大量使用中文全角标点, 这三条会把它们全部报成"易混淆字符"
+  "RUF001",
+  "RUF002",
+  "RUF003",
+]
+
+[lint.isort]
+# 这三个是仓库内的本地包/模块, 排序时应归到"本项目"一组, 而不是第三方
+known-first-party = ["policy_engine", "app", "sim"]
+
+[lint.per-file-ignores]
+# 测试里 assert 语句和固定测试数据是正常写法
+"**/tests/*" = ["B011"]

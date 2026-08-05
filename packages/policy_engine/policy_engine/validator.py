@@ -95,15 +95,18 @@ def validate(policy: Policy, inv: Inventory) -> ValidationResult:
         seen.add(key)
 
     for i, cond in enumerate(policy.conditions):
-        if isinstance(cond, WetSensorCountCondition):
-            if cond.op == "<=" and cond.value >= len(inv.sensor_ids):
-                r.issues.append(
-                    ValidationIssue(
-                        code="E_ALWAYS_TRUE_CONDITION",
-                        path=f"conditions[{i}]",
-                        message="条件恒为真，策略将对每个触发事件生效",
-                    )
+        if (
+            isinstance(cond, WetSensorCountCondition)
+            and cond.op == "<="
+            and cond.value >= len(inv.sensor_ids)
+        ):
+            r.issues.append(
+                ValidationIssue(
+                    code="E_ALWAYS_TRUE_CONDITION",
+                    path=f"conditions[{i}]",
+                    message="条件恒为真，策略将对每个触发事件生效",
                 )
+            )
 
     # TODO(W3): 跨策略冲突检测（同触发同区域的已发布策略动作互斥性）
     # TODO(W3): 自触发环检测（action 引发的状态变更能否再次命中本策略的 trigger）

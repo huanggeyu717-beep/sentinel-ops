@@ -36,7 +36,10 @@ def test_unknown_action_type_rejected_by_schema():
 
 
 def test_free_text_email_target_rejected():
-    bad = {**VALID, "actions": [{"type": "notify", "channel": "email", "target_role": "attacker@evil.com"}]}
+    bad = {
+        **VALID,
+        "actions": [{"type": "notify", "channel": "email", "target_role": "attacker@evil.com"}],
+    }
     with pytest.raises(ValidationError):
         Policy.model_validate(bad)
 

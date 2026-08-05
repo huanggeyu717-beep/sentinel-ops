@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,7 +30,7 @@ class DeviceOfflineTrigger(BaseModel):
 
 
 Trigger = Annotated[
-    Union[SensorStateChangedTrigger, DeviceOfflineTrigger],
+    SensorStateChangedTrigger | DeviceOfflineTrigger,
     Field(discriminator="type"),
 ]
 
@@ -70,12 +70,10 @@ class ZoneInCondition(BaseModel):
 
 
 Condition = Annotated[
-    Union[
-        WetSensorCountCondition,
-        IncidentUnacknowledgedCondition,
-        TimeWindowCondition,
-        ZoneInCondition,
-    ],
+    WetSensorCountCondition
+    | IncidentUnacknowledgedCondition
+    | TimeWindowCondition
+    | ZoneInCondition,
     Field(discriminator="type"),
 ]
 
@@ -106,7 +104,7 @@ class EscalateIncidentAction(BaseModel):
 
 
 Action = Annotated[
-    Union[NotifyAction, SetLedAction, EscalateIncidentAction],
+    NotifyAction | SetLedAction | EscalateIncidentAction,
     Field(discriminator="type"),
 ]
 

@@ -19,7 +19,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "mypy>=1.11"]
-
-[tool.ruff]
-line-length = 100
+# ruff 必须锁死版本: 它的"默认规则集"会随版本变化, 不锁就会出现昨天绿今天红。
+# lint 配置统一放在仓库根目录的 ruff.toml, 此处不再重复声明 [tool.ruff]。
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff==0.16.1", "mypy>=1.11"]

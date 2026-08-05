@@ -34,15 +34,22 @@ def derive_wet(state: str | None, value: int | None) -> bool:
 
 
 _INSERT_READING = text("""
-    INSERT INTO waterlevel_readings (received_at, received_ts, device_id, sensor_id, value, wet, raw)
-    VALUES (to_timestamp(CAST(:ts AS bigint) / 1000.0), CAST(:ts AS bigint), :device_id, :sensor_id, :value, :wet, CAST(:raw AS jsonb))
+    INSERT INTO waterlevel_readings
+        (received_at, received_ts, device_id, sensor_id, value, wet, raw)
+    VALUES (
+        to_timestamp(CAST(:ts AS bigint) / 1000.0), CAST(:ts AS bigint),
+        :device_id, :sensor_id, :value, :wet, CAST(:raw AS jsonb)
+    )
     ON CONFLICT (device_id, sensor_id, received_ts) DO NOTHING
     RETURNING id
 """)
 
 _UPSERT_SENSORSTATE = text("""
     INSERT INTO sensorstate (sensor_id, wet, state, updated_ts, updated_at, last_value)
-    VALUES (:sensor_id, :wet, :state, CAST(:ts AS bigint), to_timestamp(CAST(:ts AS bigint) / 1000.0), :value)
+    VALUES (
+        :sensor_id, :wet, :state, CAST(:ts AS bigint),
+        to_timestamp(CAST(:ts AS bigint) / 1000.0), :value
+    )
     ON CONFLICT (sensor_id) DO UPDATE SET
         wet        = EXCLUDED.wet,
         state      = EXCLUDED.state,
@@ -55,7 +62,10 @@ _UPSERT_SENSORSTATE = text("""
 
 _UPSERT_HEARTBEAT = text("""
     INSERT INTO device_heartbeats (device_id, last_seen_at, last_seen_ts, uptime_ms, raw)
-    VALUES (:device_id, to_timestamp(CAST(:ts AS bigint) / 1000.0), CAST(:ts AS bigint), :uptime_ms, CAST(:raw AS jsonb))
+    VALUES (
+        :device_id, to_timestamp(CAST(:ts AS bigint) / 1000.0), CAST(:ts AS bigint),
+        :uptime_ms, CAST(:raw AS jsonb)
+    )
     ON CONFLICT (device_id) DO UPDATE SET
         last_seen_at = EXCLUDED.last_seen_at,
         last_seen_ts = EXCLUDED.last_seen_ts,
@@ -67,7 +77,10 @@ _UPSERT_HEARTBEAT = text("""
 
 _INSERT_RFID = text("""
     INSERT INTO rfid_scans (device_id, rfid_id, rfid_uid, scan_ts, scanned_at, raw)
-    VALUES (:device_id, :rfid_id, :rfid_uid, CAST(:ts AS bigint), to_timestamp(CAST(:ts AS bigint) / 1000.0), CAST(:raw AS jsonb))
+    VALUES (
+        :device_id, :rfid_id, :rfid_uid, CAST(:ts AS bigint),
+        to_timestamp(CAST(:ts AS bigint) / 1000.0), CAST(:raw AS jsonb)
+    )
     ON CONFLICT (device_id, rfid_uid, scan_ts) DO NOTHING
     RETURNING id
 """)

@@ -26,9 +26,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import yaml
 
@@ -196,7 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     src = load_source(a.source, a.device_id)
     span = src.events[-1]["at_s"] if src.events else 0
     mode = "batch" if a.batch else f"live x{a.speed}"
-    print(f"数据源: {src.name} | {len(src.events)} 条事件 | 覆盖 {span / 3600:.2f} 小时 | 模式: {mode}")
+    print(
+        f"数据源: {src.name} | {len(src.events)} 条事件 | "
+        f"覆盖 {span / 3600:.2f} 小时 | 模式: {mode}"
+    )
 
     wait_for_api(a.base_url)
 

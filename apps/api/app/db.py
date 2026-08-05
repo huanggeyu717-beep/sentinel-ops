@@ -34,9 +34,8 @@ def engine():
 
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI 依赖: 每请求一个事务, 异常自动回滚。"""
-    async with _session_factory() as session:
-        async with session.begin():
-            yield session
+    async with _session_factory() as session, session.begin():
+        yield session
 
 
 def _dsn() -> str:
@@ -69,7 +68,8 @@ async def run_migrations() -> list[str]:
 
 
 DEV_SEED_SQL = """
-INSERT INTO zones (id, name) VALUES (1,'Zone 1 - Entrance'),(2,'Zone 2 - Aisle'),(3,'Zone 3 - Storage')
+INSERT INTO zones (id, name) VALUES
+    (1,'Zone 1 - Entrance'),(2,'Zone 2 - Aisle'),(3,'Zone 3 - Storage')
     ON CONFLICT (id) DO NOTHING;
 INSERT INTO devices (id, name, zone_id) VALUES
     (1,'Arduino1',1),(2,'Arduino2',2),(3,'UNKNOWN_DEVICE',3)
@@ -86,7 +86,8 @@ INSERT INTO employees (id, name, role, email, zone_id, rfid_uid) VALUES
 SELECT setval(pg_get_serial_sequence('zones','id'), GREATEST((SELECT max(id) FROM zones),1));
 SELECT setval(pg_get_serial_sequence('devices','id'), GREATEST((SELECT max(id) FROM devices),1));
 SELECT setval(pg_get_serial_sequence('sensors','id'), GREATEST((SELECT max(id) FROM sensors),1));
-SELECT setval(pg_get_serial_sequence('employees','id'), GREATEST((SELECT max(id) FROM employees),1));
+SELECT setval(pg_get_serial_sequence('employees','id'),
+              GREATEST((SELECT max(id) FROM employees),1));
 """
 
 
