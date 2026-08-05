@@ -1,0 +1,15 @@
+# 场景包: 同区多传感器漏水 + 无人接单升级
+# 覆盖: wet_sensor_count(same_zone, >=2, 180s) + incident_unacknowledged(120s)
+# 期望(在示例升级策略发布后): t=100s 起满足双条件 -> notify(zone_manager) + set_led(ON)
+name: multi_sensor_escalation
+description: Zone 1 两个传感器在 3 分钟窗口内相继变湿，且 2 分钟内无 RFID 接单
+events:
+  - {at_s: 0,   kind: heartbeat,    device_id: Arduino1, uptime_ms: 60000}
+  - {at_s: 0,   kind: heartbeat,    device_id: Arduino2, uptime_ms: 60000}
+  - {at_s: 5,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 812}
+  - {at_s: 40,  kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 790}
+  - {at_s: 60,  kind: heartbeat,    device_id: Arduino1, uptime_ms: 120000}
+  # 120s 内没有任何 rfid_scan -> unacknowledged 条件在 t≈125s 满足
+  - {at_s: 200, kind: rfid_scan,    device_id: Arduino1, rfid_uid: "04A1B2C3", rfid_id: "EMP-007"}
+  - {at_s: 260, kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 120}
+  - {at_s: 290, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 95}

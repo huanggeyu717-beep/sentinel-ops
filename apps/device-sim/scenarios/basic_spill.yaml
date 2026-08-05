@@ -1,0 +1,8 @@
+# 场景包: 单点漏水基础流程 (demo 与冒烟测试用)
+name: basic_spill
+description: Zone 2 单传感器 湿 -> 员工刷卡接单 -> 干
+events:
+  - {at_s: 0,  kind: heartbeat,    device_id: Arduino2, uptime_ms: 30000}
+  - {at_s: 3,  kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 845}
+  - {at_s: 30, kind: rfid_scan,    device_id: Arduino2, rfid_uid: "04D9E8F7", rfid_id: "EMP-003"}
+  - {at_s: 75, kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 88}
