@@ -1,0 +1,73 @@
+# 一键起全系统: docker compose up --build
+#
+# profiles 说明(默认只起 db + api + web, 保证 `up` 后立刻可用):
+#   --profile demo     额外起 device-sim, 循环回放升级剧本, 演示时用
+#   --profile replay   一次性把队友仓库的真实历史读数灌进库, 跑完即退出
+#   --profile tracing  额外起 Jaeger (W6)
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sentinel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinel}
+      POSTGRES_DB: ${POSTGRES_DB:-sentinel}
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sentinel}"]
+      interval: 3s
+      retries: 10
+
+  # 注意: 建表不走 docker-entrypoint-initdb.d, 而是 API 启动时执行 migrations/*.sql,
+  # 这样本地裸跑(不用 Docker)与 CI 走的是同一条建表路径, 不会出现"只有 Docker 里能建表"。
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      SENTINEL_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-sentinel}:${POSTGRES_PASSWORD:-sentinel}@db:5432/${POSTGRES_DB:-sentinel}
+      SENTINEL_APPLY_DEV_SEED: ${SENTINEL_APPLY_DEV_SEED:-true}
+      SENTINEL_LLM_API_KEY: ${SENTINEL_LLM_API_KEY:-}
+    ports: ["8000:8000"]
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 5s
+      retries: 12
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports: ["5173:80"]
+    depends_on: [api]
+
+  device-sim:
+    build:
+      context: .
+      dockerfile: apps/device-sim/Dockerfile
+    command: ["python", "sim.py", "scenarios/multi_sensor_escalation.yaml",
+              "--base-url", "http://api:8000", "--speed", "5", "--loop"]
+    depends_on:
+      api: { condition: service_healthy }
+    profiles: [demo]
+
+  sim-replay:
+    build:
+      context: .
+      dockerfile: apps/device-sim/Dockerfile
+    command: ["python", "sim.py", "seed/waterlevel_readings.csv",
+              "--base-url", "http://api:8000", "--batch"]
+    depends_on:
+      api: { condition: service_healthy }
+    profiles: [replay]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    ports: ["16686:16686", "4317:4317"]
+    profiles: [tracing]
+
+volumes:
+  pgdata:

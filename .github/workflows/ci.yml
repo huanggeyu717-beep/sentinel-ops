@@ -1,0 +1,61 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  engine:
+    name: policy_engine + device-sim (纯函数, 秒级)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install ruff pytest pydantic PyYAML
+      - run: ruff check packages apps/api apps/device-sim
+      - run: pip install -e packages/policy_engine
+      - run: pytest packages/policy_engine apps/device-sim -q
+
+  api:
+    name: api (带真实 Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sentinel
+          POSTGRES_PASSWORD: sentinel
+          POSTGRES_DB: sentinel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sentinel"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SENTINEL_TEST_DATABASE_URL: postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r apps/api/requirements.txt pytest
+      - run: pip install -e packages/policy_engine
+      - run: pytest apps/api/tests -q
+
+  docker:
+    name: 镜像可构建 (面试官一键复现的前提)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build api device-sim
+
+  web:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: apps/web } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci || npm install
+      - run: npm run typecheck
+      - run: npm run build
+
+  # W5+: eval 回归 (record-replay, 零 token 成本), prompt_injection 拦截率 100% 为红线
