@@ -43,6 +43,19 @@ class UnknownEmployee(Exception):
     """员工不存在 -> 422。"""
 
 
+class CrossZonePermissionRequired(Exception):
+    """跨区派单, 但操作者本身没有跨区资格 -> 403。
+
+    必须先于 CrossZoneAssignDenied 判断: 否则没资格的人会先拿到 422
+    "请加上 allow_cross_zone=true", 照做之后再吃 403 —— 提示把人引进死胡同。
+    """
+
+    def __init__(self, employee_zone_id: int | None, incident_zone_id: int | None) -> None:
+        super().__init__(employee_zone_id, incident_zone_id)
+        self.employee_zone_id = employee_zone_id
+        self.incident_zone_id = incident_zone_id
+
+
 class CrossZoneAssignDenied(Exception):
     """跨区派单未显式放行 -> 422 (决策 7: 员工 zone 为空同样按跨区处理)。"""
 
@@ -134,9 +147,22 @@ _APPEND_EVENT = text("""
 """)
 
 _APPEND_AUDIT = text("""
-    INSERT INTO audit_log (action, entity, entity_id, detail)
-    VALUES (:action, 'incident', :entity_id, CAST(:detail AS jsonb))
+    INSERT INTO audit_log (user_id, action, entity, entity_id, detail)
+    VALUES (:user_id, :action, 'incident', :entity_id, CAST(:detail AS jsonb))
 """)
+
+
+def _user_from_actor(actor: str) -> int | None:
+    """actor 形如 user:2 (登录用户) 时提取其 user id, 其余口径返回 None。
+
+    SPEC-004 统一后的 actor 口径: 登录用户记 user:{id}, 刷卡记 employee:{id},
+    系统动作记 system / auto_sensor_dry。audit_log.user_id 只在第一种时有值 ——
+    后两种本来就不对应任何登录账号。
+    """
+    prefix, _, suffix = actor.partition(":")
+    if prefix == "user" and suffix.isdigit():
+        return int(suffix)
+    return None
 
 
 async def _record(
@@ -171,6 +197,7 @@ async def _audit(
     await session.execute(
         _APPEND_AUDIT,
         {
+            "user_id": _user_from_actor(actor),
             "action": action,
             "entity_id": str(incident_id),
             "detail": json.dumps(payload, ensure_ascii=False),
@@ -298,6 +325,7 @@ async def assign(
     employee_id: int,
     actor: str,
     allow_cross_zone: bool = False,
+    caller_may_cross_zone: bool = True,
 ) -> dict[str, Any]:
     """派单/改派。默认只能派给事故所在区域的员工, 跨区必须显式放行并被审计 (决策 7)。
 
@@ -323,8 +351,13 @@ async def assign(
 
     # 员工 zone 为空视为不属于任何区域, 同样按跨区处理
     cross_zone = employee_zone_id is None or employee_zone_id != incident["zone_id"]
-    if cross_zone and not allow_cross_zone:
-        raise CrossZoneAssignDenied(employee_zone_id, incident["zone_id"])
+    if cross_zone:
+        # 先问"你有没有资格"(403), 再问"你确认了吗"(422)。次序反过来会把没资格的人
+        # 引到一条走不通的路上: 先被告知加 flag, 加了又被拒。
+        if not caller_may_cross_zone:
+            raise CrossZonePermissionRequired(employee_zone_id, incident["zone_id"])
+        if not allow_cross_zone:
+            raise CrossZoneAssignDenied(employee_zone_id, incident["zone_id"])
 
     updated = (
         await session.execute(_ASSIGN, {"id": incident_id, "employee_id": employee_id})
@@ -353,17 +386,6 @@ async def assign(
     return await get_incident(session, incident_id)
 
 
-def _employee_from_actor(actor: str) -> int | None:
-    """actor 形如 employee:3 时提取员工 id, 其余 (system 等) 返回 None。
-
-    SPEC-004 JWT 落地前 X-Actor 是不受信的占位, 解析出的 id 还要回表验证。
-    """
-    prefix, _, suffix = actor.partition(":")
-    if prefix == "employee" and suffix.isdigit():
-        return int(suffix)
-    return None
-
-
 async def acknowledge(
     session: AsyncSession,
     incident_id: int,
@@ -374,20 +396,11 @@ async def acknowledge(
 ) -> dict[str, Any]:
     """接单。open → acknowledged 允许跳过分配, assigned_employee_id 不回填 (修订 1)。
 
-    employee_id 是**实际接单人**: 刷卡路径由调用方传入(已验证),
-    手工路径从 actor 解析并回表验证, 对不上的一律记空, 不让脏 id 进 FK。
+    employee_id 是**实际接单人**: 刷卡路径传卡对应的员工, 手工路径由路由层传
+    当前登录用户绑定的 employee_id (账号未绑员工即 None, 如 admin)。
+    两个来源都出自数据库 (SPEC-004 后没有不受信的占位输入), 不再回表验证。
     """
     current = await _current_status(session, incident_id)
-    if employee_id is None:
-        employee_id = _employee_from_actor(actor)
-    if employee_id is not None:
-        exists = (
-            await session.execute(
-                text("SELECT 1 FROM employees WHERE id = :id"), {"id": employee_id}
-            )
-        ).scalar_one_or_none()
-        if exists is None:
-            employee_id = None
     updated = (
         await session.execute(
             _ACKNOWLEDGE, {"id": incident_id, "employee_id": employee_id, "ts": ts}
@@ -403,7 +416,7 @@ async def acknowledge(
 async def resolve(
     session: AsyncSession, incident_id: int, actor: str, note: str | None = None
 ) -> dict[str, Any]:
-    """人工解决。resolved_by 记 actor 原文 (如 employee:3), 与自动解决的来源区分 (决策 4)。"""
+    """人工解决。resolved_by 记 actor 原文 (如 user:2 / employee:1), 与自动解决区分 (决策 4)。"""
     current = await _current_status(session, incident_id)
     updated = (
         await session.execute(_RESOLVE, {"id": incident_id, "resolved_by": actor})

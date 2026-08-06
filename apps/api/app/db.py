@@ -23,7 +23,12 @@ import sqlalchemy as sa
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from .config import settings
 
@@ -46,7 +51,7 @@ _engine = create_async_engine(settings().database_url, pool_pre_ping=True, futur
 _session_factory = async_sessionmaker(_engine, expire_on_commit=False, class_=AsyncSession)
 
 
-def engine():
+def engine() -> AsyncEngine:
     return _engine
 
 
@@ -118,7 +123,11 @@ async def run_migrations() -> str:
     return await asyncio.to_thread(_upgrade_to_head)
 
 
-DEV_SEED_SQL = """
+# 种子账号统一密码 "sentinel-demo" 的 bcrypt(cost 12) 哈希, 明文另见 .env.example 与 README。
+# 预先算好写死, 而不是启动时现算: 幂等、可复现, 也省掉每次启动 3 次 bcrypt 的等待。
+_SEED_PASSWORD_HASH = "$2b$12$nqoRSMypSBq4CCcE3wrxFO2D0CxxYwvWTrl5sSyoJxFQ.69xOxbs."
+
+DEV_SEED_SQL = f"""
 INSERT INTO zones (id, name) VALUES
     (1,'Zone 1 - Entrance'),(2,'Zone 2 - Aisle'),(3,'Zone 3 - Storage')
     ON CONFLICT (id) DO NOTHING;
@@ -139,6 +148,20 @@ SELECT setval(pg_get_serial_sequence('devices','id'), GREATEST((SELECT max(id) F
 SELECT setval(pg_get_serial_sequence('sensors','id'), GREATEST((SELECT max(id) FROM sensors),1));
 SELECT setval(pg_get_serial_sequence('employees','id'),
               GREATEST((SELECT max(id) FROM employees),1));
+-- 登录账号 (SPEC-004)。三条刻意覆盖 users 与 employees 的三种真实关系, 这正是
+-- users.employee_id 必须可空的理由 (方案 A): admin 有账号但不是现场员工;
+-- Chris/Alex 有账号也各绑一名员工; Bo Wang 是现场员工但没有账号 (只刷卡, 从不登录)。
+INSERT INTO users (id, email, password_hash, display_name, employee_id) VALUES
+    (1,'admin@example.com','{_SEED_PASSWORD_HASH}','Admin',NULL),
+    (2,'chris@example.com','{_SEED_PASSWORD_HASH}','Chris Li',3),
+    (3,'alex@example.com','{_SEED_PASSWORD_HASH}','Alex Chen',1)
+    ON CONFLICT (id) DO NOTHING;
+INSERT INTO user_roles (user_id, role_id)
+    SELECT v.user_id, r.id
+    FROM (VALUES (1,'admin'),(2,'manager'),(3,'operator')) AS v(user_id, role_name)
+    JOIN roles r ON r.name = v.role_name
+    ON CONFLICT DO NOTHING;
+SELECT setval(pg_get_serial_sequence('users','id'), GREATEST((SELECT max(id) FROM users),1));
 """
 
 

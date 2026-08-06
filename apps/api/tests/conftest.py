@@ -1,7 +1,7 @@
 """测试夹具。
 
 约定: 测试跑在独立库 sentinel_test 上, 不碰开发库。
-库不存在时自动创建, 每个测试前清空遥测表, 保证用例互不干扰。
+库不存在时自动创建, 每个测试前清空遥测表与事故相关表, 保证用例互不干扰。
 覆盖地址用 SENTINEL_TEST_DATABASE_URL。
 """
 from __future__ import annotations
@@ -25,7 +25,11 @@ os.environ["SENTINEL_DATABASE_URL"] = TEST_URL
 os.environ["SENTINEL_APPLY_DEV_SEED"] = "true"
 
 DSN = TEST_URL.replace("+asyncpg", "")
-TELEMETRY_TABLES = ["waterlevel_readings", "rfid_scans", "device_heartbeats", "sensorstate"]
+TELEMETRY_TABLES = [
+    "waterlevel_readings", "rfid_scans", "device_heartbeats", "sensorstate",
+    # W2 事故生命周期: incident_events 引用 incidents, 同一条 TRUNCATE 一起清
+    "incident_events", "incidents", "audit_log",
+]
 
 
 def _ensure_database() -> None:
@@ -46,6 +50,10 @@ def _ensure_database() -> None:
 _ensure_database()
 
 from app.main import app  # noqa: E402  必须在设置好 env 之后导入
+from app.services.auth_service import COOKIE_NAME  # noqa: E402
+
+# 种子账号统一密码, 与 db.py 里写死的 bcrypt 哈希对应 (SPEC-004)
+SEED_PASSWORD = "sentinel-demo"
 
 
 @pytest.fixture(scope="session")
@@ -54,6 +62,27 @@ def client():
 
     with TestClient(app) as c:  # with 块内会执行 lifespan -> 建表 + 种子
         yield c
+
+
+@pytest.fixture(scope="session")
+def auth_headers(client):
+    """按邮箱登录, 返回 Bearer 请求头; 同一账号整个测试会话只登录一次。
+
+    刻意走请求头而不是 cookie: TestClient 的 cookie jar 是全局的, 留着会让
+    后续用例被隐式登录, 401 类断言就测不到东西了。cookie 通道由 test_auth 单独覆盖。
+    """
+    cache: dict[str, dict[str, str]] = {}
+
+    def login(email: str = "chris@example.com", password: str = SEED_PASSWORD) -> dict[str, str]:
+        if email not in cache:
+            r = client.post("/auth/login", json={"email": email, "password": password})
+            assert r.status_code == 200, r.text
+            token = client.cookies[COOKIE_NAME]
+            client.cookies.clear()
+            cache[email] = {"Authorization": f"Bearer {token}"}
+        return cache[email]
+
+    return login
 
 
 @pytest.fixture(autouse=True)
@@ -66,4 +95,18 @@ def clean_telemetry(client):
             await conn.close()
 
     asyncio.run(go())
+    client.cookies.clear()  # 上一个用例登录留下的会话不许外溢
     yield
+
+
+@pytest.fixture(autouse=True)
+def reset_login_limiter():
+    """每条用例前清空登录限流计数。
+
+    否则 401 类用例攒下的失败次数会溢出到后面的用例, 变成随机失败的 429。
+    """
+    from app.routers.auth import login_limiter
+
+    login_limiter.reset()
+    yield
+    login_limiter.reset()

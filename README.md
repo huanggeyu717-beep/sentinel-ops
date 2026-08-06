@@ -23,6 +23,18 @@ docker compose --profile demo up device-sim
 `uvicorn app.main:app --reload` (在 `apps/api` 下) + `python sim.py ...`。
 建表由 API 启动时的迁移器完成, 三条路径共用同一份 `migrations/*.sql`。
 
+### 演示账号 (种子自动写入)
+
+| 邮箱 | 密码 | 角色 |
+|---|---|---|
+| `admin@example.com` | `sentinel-demo` | admin (不绑现场员工) |
+| `chris@example.com` | `sentinel-demo` | manager (绑员工 Chris Li) |
+| `alex@example.com` | `sentinel-demo` | operator (绑员工 Alex Chen) |
+
+`POST /auth/login` 登录后会话放在 httpOnly cookie 里, 浏览器里的 `/docs` 直接可用;
+curl 场景可从登录响应的 `Set-Cookie` 取 token, 以 `Authorization: Bearer` 请求头携带。
+员工 Bo Wang 刻意没有账号: 他只在现场刷卡, 从不登录 (见 SPEC-004)。
+
 ## 当前进度
 
 | 周 | 内容 | 状态 |
