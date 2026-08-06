@@ -22,8 +22,8 @@ log = logging.getLogger("sentinel")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """启动时把数据库带到最新版本, 让 `docker compose up` 真正是一条命令。"""
-    applied = await run_migrations()
-    log.info("migrations applied: %s", applied or "(already up to date)")
+    revision = await run_migrations()
+    log.info("database at alembic revision: %s", revision)
     if settings().apply_dev_seed:
         await apply_dev_seed()
         log.info("dev seed applied")

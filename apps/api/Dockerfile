@@ -15,6 +15,10 @@ COPY packages/policy_engine ./packages/policy_engine
 RUN pip install ./packages/policy_engine
 
 COPY apps/api/app ./app
+# 迁移相关: alembic.ini + 版本脚本 + W1 那两份被基线引用的 .sql 原文。
+# 少 COPY 任何一个, 容器启动时的自动升级都会失败 (见 ADR-006)。
+COPY apps/api/alembic.ini ./alembic.ini
+COPY apps/api/alembic ./alembic
 COPY apps/api/migrations ./migrations
 
 EXPOSE 8000

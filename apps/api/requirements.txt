@@ -4,6 +4,8 @@ uvicorn[standard]>=0.30
 sqlalchemy[asyncio]>=2.0
 asyncpg>=0.29
 alembic>=1.13
+# Alembic 用的同步驱动 (应用运行时仍走 asyncpg), 见 ADR-006
+psycopg[binary]>=3.2
 pydantic>=2.8
 pydantic-settings>=2.4
 sse-starlette>=2.1
