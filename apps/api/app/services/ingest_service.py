@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
+from . import incident_service
 
 
 @dataclass(slots=True)
@@ -22,6 +24,10 @@ class IngestResult:
     kind: str
     stored: bool          # 是否新写入(False = 幂等命中或被乱序保护拒绝)
     state_updated: bool    # 是否推进了当前状态
+    # --- W2 事故联动 (SPEC-003), 仅 sensor_state / rfid_scan 会填 ---
+    incident_id: int | None = None   # 本次事件开出/推进的事故
+    matched: bool | None = None      # rfid_scan: 是否成功接单
+    reason: str | None = None        # rfid_scan 未接单的原因码
 
 
 def derive_wet(state: str | None, value: int | None) -> bool:
@@ -86,7 +92,7 @@ _INSERT_RFID = text("""
 """)
 
 
-async def handle_sensor_state(session: AsyncSession, ev: dict) -> IngestResult:
+async def handle_sensor_state(session: AsyncSession, ev: dict[str, Any]) -> IngestResult:
     wet = derive_wet(ev.get("state"), ev.get("value"))
     state = (ev.get("state") or ("WET" if wet else "DRY")).upper()
     params = {
@@ -100,10 +106,15 @@ async def handle_sensor_state(session: AsyncSession, ev: dict) -> IngestResult:
     }
     stored = (await session.execute(_INSERT_READING, params)).scalar_one_or_none() is not None
     updated = (await session.execute(_UPSERT_SENSORSTATE, params)).scalar_one_or_none() is not None
-    return IngestResult("sensor_state", stored, updated)
+    incident_id = None
+    if updated:  # 乱序被拒的旧事件不触发事故联动
+        incident_id = await incident_service.apply_sensor_state(
+            session, ev["sensor_id"], wet, ev["ts"]
+        )
+    return IngestResult("sensor_state", stored, updated, incident_id=incident_id)
 
 
-async def handle_heartbeat(session: AsyncSession, ev: dict) -> IngestResult:
+async def handle_heartbeat(session: AsyncSession, ev: dict[str, Any]) -> IngestResult:
     params = {
         "ts": ev["ts"],
         "device_id": ev["device_id"],
@@ -114,7 +125,7 @@ async def handle_heartbeat(session: AsyncSession, ev: dict) -> IngestResult:
     return IngestResult("heartbeat", updated, updated)
 
 
-async def handle_rfid_scan(session: AsyncSession, ev: dict) -> IngestResult:
+async def handle_rfid_scan(session: AsyncSession, ev: dict[str, Any]) -> IngestResult:
     params = {
         "ts": ev["ts"],
         "device_id": ev["device_id"],
@@ -123,7 +134,16 @@ async def handle_rfid_scan(session: AsyncSession, ev: dict) -> IngestResult:
         "raw": json.dumps(ev, ensure_ascii=False),
     }
     stored = (await session.execute(_INSERT_RFID, params)).scalar_one_or_none() is not None
-    return IngestResult("rfid_scan", stored, stored)
+    if not stored:
+        # 重放的旧刷卡不再推进事故, 避免"历史刷卡接走新事故"
+        return IngestResult("rfid_scan", False, False, matched=False, reason="duplicate_scan")
+    match = await incident_service.acknowledge_by_rfid(
+        session, ev["device_id"], ev["rfid_uid"], ev["ts"]
+    )
+    return IngestResult(
+        "rfid_scan", True, True,
+        incident_id=match.incident_id, matched=match.matched, reason=match.reason,
+    )
 
 
 HANDLERS = {
@@ -133,6 +153,7 @@ HANDLERS = {
 }
 
 
-async def ingest_event(session: AsyncSession, ev: dict) -> IngestResult:
-    """W1: 落库即结束。W3 起在这里把事件投递给 Policy 引擎消费队列。"""
+async def ingest_event(session: AsyncSession, ev: dict[str, Any]) -> IngestResult:
+    """W1 落库; W2 起在同一事务里联动事故生命周期 (SPEC-003)。
+    W3 起在这里把事件投递给 Policy 引擎消费队列。"""
     return await HANDLERS[ev["kind"]](session, ev)
