@@ -2,7 +2,7 @@
 
 种子账号 (conftest.SEED_PASSWORD): admin@example.com (admin, 不绑员工) /
 chris@example.com (manager, user 2, 绑员工 3) / alex@example.com (operator, user 3, 绑员工 1)。
-viewer 角色没有种子账号, 由本文件的 fixture 直接入库一个。
+viewer 角色没有种子账号, 由 conftest 的 viewer_headers 夹具直接入库一个。
 
 事故流转本身的行为在 test_incidents.py; 这里只测身份与权限的边界。
 """
@@ -43,30 +43,7 @@ def open_incident(client) -> int:
     return incident_id
 
 
-@pytest.fixture(scope="session")
-def viewer_headers(client, auth_headers):
-    """入库一个 viewer 账号并返回其 Bearer 头 (种子只有另外三种角色)。"""
-    email = "viewer@example.com"
-
-    async def go() -> None:
-        conn = await asyncpg.connect(dsn())
-        try:
-            await conn.execute(
-                "INSERT INTO users (email, password_hash, display_name) "
-                "VALUES ($1, $2, 'View Only') ON CONFLICT (email) DO NOTHING",
-                email, auth_service.hash_password(SEED_PASSWORD),
-            )
-            await conn.execute(
-                "INSERT INTO user_roles (user_id, role_id) "
-                "SELECT u.id, r.id FROM users u, roles r "
-                "WHERE u.email = $1 AND r.name = 'viewer' ON CONFLICT DO NOTHING",
-                email,
-            )
-        finally:
-            await conn.close()
-
-    asyncio.run(go())
-    return auth_headers(email)
+# viewer_headers 夹具已上移到 conftest (test_drills 也要用它测 403)
 
 
 # ===== 认证: 401 边界 =====

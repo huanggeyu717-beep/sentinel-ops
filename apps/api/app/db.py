@@ -55,6 +55,11 @@ def engine() -> AsyncEngine:
     return _engine
 
 
+def session_factory() -> async_sessionmaker[AsyncSession]:
+    """请求之外(如演练后台任务)开会话用。请求内一律走 get_session 依赖。"""
+    return _session_factory
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
     """FastAPI 依赖: 每请求一个事务, 异常自动回滚。"""
     async with _session_factory() as session, session.begin():
@@ -131,13 +136,23 @@ DEV_SEED_SQL = f"""
 INSERT INTO zones (id, name) VALUES
     (1,'Zone 1 - Entrance'),(2,'Zone 2 - Aisle'),(3,'Zone 3 - Storage')
     ON CONFLICT (id) DO NOTHING;
-INSERT INTO devices (id, name, zone_id) VALUES
-    (1,'Arduino1',1),(2,'Arduino2',2),(3,'UNKNOWN_DEVICE',3)
-    ON CONFLICT (id) DO NOTHING;
-INSERT INTO sensors (id, device_id, zone_id, active, threshold_value) VALUES
-    (0,3,3,true,500),(1,1,1,true,500),(2,1,1,true,500),
-    (3,2,2,true,500),(4,2,2,true,500),(5,3,3,true,500)
-    ON CONFLICT (id) DO NOTHING;
+-- 坐标是相对底图的百分比 0-100 (SPEC-005 前置 A), 按 zone 分区: 1 左 / 2 中 / 3 右。
+-- UNKNOWN_DEVICE 与它的占位传感器 0 刻意不填 —— 让前端"未定位"分支在演示数据里就能看见。
+-- 冲突时只 COALESCE 回填空缺, 不覆盖手工标注; 这样 W2 之前建的老库(行已存在,
+-- DO NOTHING 不会生效)也能拿到坐标, 而人工调过的位置不会被启动种子改回去。
+INSERT INTO devices (id, name, zone_id, pos_x, pos_y) VALUES
+    (1,'Arduino1',1,15.0,22.0),(2,'Arduino2',2,50.0,20.0),(3,'UNKNOWN_DEVICE',3,NULL,NULL)
+    ON CONFLICT (id) DO UPDATE SET
+        pos_x = COALESCE(devices.pos_x, EXCLUDED.pos_x),
+        pos_y = COALESCE(devices.pos_y, EXCLUDED.pos_y);
+INSERT INTO sensors (id, device_id, zone_id, active, threshold_value, pos_x, pos_y) VALUES
+    (0,3,3,true,500,NULL,NULL),
+    (1,1,1,true,500,12.0,60.0),(2,1,1,true,500,26.0,72.0),
+    (3,2,2,true,500,44.0,58.0),(4,2,2,true,500,58.0,70.0),
+    (5,3,3,true,500,84.0,64.0)
+    ON CONFLICT (id) DO UPDATE SET
+        pos_x = COALESCE(sensors.pos_x, EXCLUDED.pos_x),
+        pos_y = COALESCE(sensors.pos_y, EXCLUDED.pos_y);
 INSERT INTO employees (id, name, role, email, zone_id, rfid_uid) VALUES
     (1,'Alex Chen','operator','alex@example.com',1,'04A1B2C3'),
     (2,'Bo Wang','operator','bo@example.com',2,'04D9E8F7'),

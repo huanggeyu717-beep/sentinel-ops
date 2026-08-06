@@ -16,10 +16,10 @@ logs:           ## 跟踪 API 日志
 	docker compose logs -f api
 
 sim:            ## 回放"同区多传感器无人响应升级"场景 (x10 加速)
-	python apps/device-sim/sim.py apps/device-sim/scenarios/multi_sensor_escalation.yaml --speed 10
+	python apps/device-sim/sim.py scenarios/multi_sensor_escalation.yaml --speed 10
 
 sim-basic:      ## 回放单点漏水基础流程 (x10 加速)
-	python apps/device-sim/sim.py apps/device-sim/scenarios/basic_spill.yaml --speed 10
+	python apps/device-sim/sim.py scenarios/basic_spill.yaml --speed 10
 
 replay:         ## 把原系统真实历史读数一次性灌入数据库 (幂等, 可重复执行)
 	python apps/device-sim/sim.py apps/device-sim/seed/waterlevel_readings.csv --batch
@@ -35,9 +35,8 @@ test-unit:      ## 只跑不依赖数据库的测试
 test-api:       ## 只跑 API 测试 (需要本地 Postgres)
 	bash scripts/ci/test-api.sh
 
-lint:           ## 静态检查 (先校验 ruff 版本, 再跑 CI 同一份脚本)
+lint:           ## 静态检查 ruff + mypy (与 CI 同一份脚本)
 	bash scripts/ci/lint.sh
-	mypy apps/api packages/policy_engine
 
 lint-fix:       ## 自动修可修的 lint 问题
 	ruff check --fix packages apps/api apps/device-sim evals

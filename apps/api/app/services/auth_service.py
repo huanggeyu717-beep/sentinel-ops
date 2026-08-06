@@ -42,16 +42,18 @@ PERM_INCIDENT_TRANSITION = "incidents:transition"       # assign / acknowledge /
 PERM_CROSS_ZONE_ASSIGN = "incidents:cross_zone_assign"  # 跨区派单显式放行
 PERM_APPROVE_POLICY = "policies:approve"                # W3 审批发布, 此处先占位
 PERM_MANAGE_USERS = "users:manage"                      # 用户与角色管理
+PERM_TRIGGER_DRILL = "drills:trigger"                   # 触发演练 (SPEC-005 决策 6: operator+)
 
 _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "viewer": frozenset({PERM_READ}),
-    "operator": frozenset({PERM_READ, PERM_INCIDENT_TRANSITION}),
+    "operator": frozenset({PERM_READ, PERM_INCIDENT_TRANSITION, PERM_TRIGGER_DRILL}),
     "manager": frozenset(
-        {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_CROSS_ZONE_ASSIGN, PERM_APPROVE_POLICY}
+        {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_CROSS_ZONE_ASSIGN,
+         PERM_APPROVE_POLICY, PERM_TRIGGER_DRILL}
     ),
     "admin": frozenset(
         {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_CROSS_ZONE_ASSIGN,
-         PERM_APPROVE_POLICY, PERM_MANAGE_USERS}
+         PERM_APPROVE_POLICY, PERM_MANAGE_USERS, PERM_TRIGGER_DRILL}
     ),
 }
 

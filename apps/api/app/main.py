@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import apply_dev_seed, run_migrations
-from .routers import auth, incidents, ingest, status
+from .routers import auth, drills, incidents, ingest, status
 from .services import auth_service
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -47,6 +47,7 @@ app.include_router(auth.router)
 app.include_router(ingest.router)
 app.include_router(status.router)
 app.include_router(incidents.router)
+app.include_router(drills.router)
 # W3: policies; W4: agent_tasks(+SSE)
 
 

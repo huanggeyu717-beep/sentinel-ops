@@ -14,9 +14,11 @@ RUN pip install -r requirements.txt
 COPY packages/policy_engine ./packages/policy_engine
 RUN pip install ./packages/policy_engine
 
-# 演练接口 (SPEC-005) 复用模拟器的场景装载
+# 演练接口 (SPEC-005) 复用模拟器的场景装载, 场景剧本本身在仓库根 scenarios/。
+# 漏 COPY scenarios 的话, drill_service 导入时就会报错, 容器起不来 —— 刻意的快炸。
 COPY packages/scenario ./packages/scenario
 RUN pip install ./packages/scenario
+COPY scenarios ./scenarios
 
 COPY apps/api/app ./app
 # 迁移相关: alembic.ini + 版本脚本 + W1 那两份被基线引用的 .sql 原文。

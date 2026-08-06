@@ -30,15 +30,37 @@ Dashboard 的五块里, 三块 (传感器状态 / 心跳 / 事故列表) 复用�
 
 设备与传感器分别存位置, 因为物理上不在一处 (板子在墙上, 探头在地面)。
 
+**种子必须带坐标**: dev seed 给 5 个传感器与 3 台设备都填上位置, 按 zone 分区排布
+(Zone 1 在左、Zone 2 居中、Zone 3 在右)。**刻意留一台设备不填**, 让"未定位"分支
+在演示数据里就能看见 —— 否则那段前端代码到上线都没人走过。
+不种坐标的话, 全新库起来地图是空的, "面试官一键复现"这条就断了。
+
+**`/status/sensors` 与 `/status/devices` 的响应要带上 `pos_x` / `pos_y`**,
+前端才画得出来。这两个接口 W1 就有, 本次只加字段, 不改语义。
+
 ### 前置 B: 演练触发接口
 
 模拟器 `sim.py` 现在只能命令行跑。演示视频里要能在网页上点一下就触发场景。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/drills/scenarios` | 列出 `apps/device-sim/scenarios/*.yaml` 可用场景 |
+| GET | `/drills/scenarios` | 列出可用场景 (名字 + 事件数 + 覆盖时长) |
 | POST | `/drills/{scenario}` | 启动一次演练, 202 + `{drill_id}` |
 | GET | `/drills/{drill_id}` | 该次演练的状态与进度 |
+
+**场景文件挪到仓库根的 `scenarios/`**。原来在 `apps/device-sim/scenarios/`,
+但现在 API 也要读它们 —— 让 `apps/api/Dockerfile` 去 COPY `apps/device-sim/` 下的东西,
+下一个人一定会问"API 为什么需要模拟器的文件"。挪到根目录后两边都只是读共享数据,
+谁也不用伸手进对方的目录。连带要改: `Makefile` 三条命令的路径、
+两个 Dockerfile 的 COPY、`sim.py` 里若有默认路径、引用场景路径的测试。
+(`seed/waterlevel_readings.csv` 不动 —— 只有 CLI 回放用得到, API 的演练只跑 YAML 剧本。)
+
+**演练按加速倍率跑**, 默认 10 倍 (与 `make sim` 一致), 由 `SENTINEL_DRILL_SPEED` 配置。
+原速跑完一个场景要几分钟, 演示等不起; 倍率要回在 `GET /drills/{id}` 里,
+前端才能显示"预计还有多久"。
+
+`GET /drills/{drill_id}` 至少返回: `status` (running / completed / failed)、
+`scenario`、`speed`、`events_total`、`events_sent`、`started_at`、失败时的 `error`。
 
 **前端一律不自己造事件。** 直接调 `/ingest` 发假数据会绕过模拟器, 破坏
 "模拟器是唯一事实源"这个前提 (SPEC-000 决策 4 与 CLAUDE.md 不变量 3 的同一精神)。
@@ -69,6 +91,8 @@ Dashboard 的五块里, 三块 (传感器状态 / 心跳 / 事故列表) 复用�
    死信的 Agent 任务用的 (ADR-003); 演练是演示用的一次性动作, 丢了重跑即可。
    刻意不复用, 免得把一张有审计语义的表稀释成通用任务表。
    代价: API 重启后进行中的演练状态丢失 —— 可接受, 且要在响应里说清楚。
+   **只保留最近 N 次 (默认 20) 的记录**, 超出丢最旧的 —— 内存里的东西必须有上界,
+   否则长时间运行会一直涨。
 5. **同一场景不允许并发演练**。已有同名演练在跑时返回 409。
    否则两份事件流交叉灌进同一批传感器, 时间线会变得没法解释。
 6. **触发演练需要 operator 及以上**。viewer 只能看不能点。
@@ -121,7 +145,11 @@ Dashboard 的五块里, 三块 (传感器状态 / 心跳 / 事故列表) 复用�
 - 事故详情显示完整时间线, 且**"派给谁"与"谁接的单"分列两栏** (SPEC-003 修订 1);
 - viewer 登录后看不到操作按钮, 且用 curl 直接打 assign 返回 403;
 - 演练面板选场景启动后, 平面图上的传感器在 30 秒内变色、事故列表出现新事故;
-- 同一场景重复启动返回 409;
+- 同一场景重复启动返回 409; 上一次跑完之后再启动同一场景可以成功;
+- `GET /drills/{id}` 的 `events_sent` 会随时间增长, 结束后 `status=completed`;
+- viewer 启动演练返回 403;
+- 全新库启动后 `/status/sensors` 带得出坐标 (种子已填), 且有一台设备没有坐标
+  用来验证"未定位"分支;
 - `npm run typecheck` 与 `npm run build` 通过 (CI 的 web job 已在跑这两条);
 - 抽包之后 `make sim` / `make sim-basic` / `make replay` 三条命令行为不变, 输出不变;
 - `make lint` 与全部测试绿, 且**测试总数不少于抽包前**。

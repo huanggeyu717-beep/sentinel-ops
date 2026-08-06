@@ -10,15 +10,16 @@ eval fixtures / E2E 冒烟测试 共用同一份场景语义。
 场景装载与时间轴换算在 packages/scenario (SPEC-005 方案 B 抽包, API 的演练接口
 复用同一份); 本文件只剩 命令行参数 / 按 --speed 推进时间 / HTTP 投递 / 进度打印。
 
-用法:
+用法 (从仓库根执行; 场景剧本在根目录 scenarios/, API 的演练接口也读同一份):
     # 剧本模式, 10 倍速
-    python sim.py scenarios/basic_spill.yaml --speed 10
+    python apps/device-sim/sim.py scenarios/basic_spill.yaml --speed 10
 
     # 真实数据回放, 一次性灌库并保留其真实历史时间戳 (15 小时数据几秒钟灌完)
-    python sim.py seed/waterlevel_readings.csv --batch
+    python apps/device-sim/sim.py apps/device-sim/seed/waterlevel_readings.csv --batch
 
     # 真实数据按 600 倍速"直播", 时间轴平移到当前时刻
-    python sim.py seed/waterlevel_readings.csv --speed 600 --shift-to-now
+    python apps/device-sim/sim.py apps/device-sim/seed/waterlevel_readings.csv \
+        --speed 600 --shift-to-now
 """
 from __future__ import annotations
 

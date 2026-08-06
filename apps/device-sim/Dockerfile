@@ -11,5 +11,7 @@ COPY packages/scenario ./packages/scenario
 RUN pip install ./packages/scenario
 
 COPY apps/device-sim/ ./
+# 场景剧本在仓库根 scenarios/ (SPEC-005: API 的演练接口也要读, 不再放在模拟器目录下)
+COPY scenarios ./scenarios
 
 CMD ["python", "sim.py", "scenarios/basic_spill.yaml", "--base-url", "http://api:8000", "--speed", "5"]

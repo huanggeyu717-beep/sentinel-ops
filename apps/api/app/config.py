@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # 传感器连续干燥超过该秒数才自动解决事故, 防止读数在阈值附近抖动时事故反复开关
     auto_resolve_dry_seconds: int = 300
 
+    # --- W2 Dashboard 演练 (SPEC-005 前置 B) ---
+    drill_speed: float = 10.0     # 演练回放的加速倍率 (与 make sim 一致), 回显在 GET /drills/{id}
+    drill_history_limit: int = 20  # 内存中保留的最近演练记录数, 超出丢最旧 (决策 4: 必须有上界)
+
     # --- LLM (W4 起使用) ---
     llm_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"  # 火山方舟, OpenAI 兼容
     llm_api_key: str = ""

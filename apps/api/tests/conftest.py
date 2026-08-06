@@ -85,6 +85,37 @@ def auth_headers(client):
     return login
 
 
+@pytest.fixture(scope="session")
+def viewer_headers(client, auth_headers):
+    """入库一个 viewer 账号并返回其 Bearer 头 (种子只有另外三种角色)。
+
+    放 conftest 是因为 test_auth 与 test_drills 都要用它测 403。
+    """
+    from app.services import auth_service
+
+    email = "viewer@example.com"
+
+    async def go() -> None:
+        conn = await asyncpg.connect(DSN)
+        try:
+            await conn.execute(
+                "INSERT INTO users (email, password_hash, display_name) "
+                "VALUES ($1, $2, 'View Only') ON CONFLICT (email) DO NOTHING",
+                email, auth_service.hash_password(SEED_PASSWORD),
+            )
+            await conn.execute(
+                "INSERT INTO user_roles (user_id, role_id) "
+                "SELECT u.id, r.id FROM users u, roles r "
+                "WHERE u.email = $1 AND r.name = 'viewer' ON CONFLICT DO NOTHING",
+                email,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(go())
+    return auth_headers(email)
+
+
 @pytest.fixture(autouse=True)
 def clean_telemetry(client):
     async def go() -> None:

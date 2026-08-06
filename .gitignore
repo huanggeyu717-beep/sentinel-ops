@@ -13,3 +13,6 @@ pgdata/
 .ruff_cache/
 .mypy_cache/
 *.egg-info/
+
+# 自用备忘, 不进仓库
+名词速查.md

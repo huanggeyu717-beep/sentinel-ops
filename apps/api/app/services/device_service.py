@@ -24,19 +24,26 @@ _SENSOR_STATUS = text("""
            cfg.zone_id,
            z.name AS zone_name,
            cfg.threshold_value,
-           cfg.active
+           cfg.active,
+           cfg.pos_x::float8 AS pos_x,
+           cfg.pos_y::float8 AS pos_y
     FROM sensorstate s
     LEFT JOIN sensors cfg ON cfg.id = s.sensor_id
     LEFT JOIN zones z ON z.id = cfg.zone_id
     ORDER BY s.sensor_id
 """)
 
+# 心跳表的主键是设备上报的名字字符串, 坐标在 devices 配置表里, 按 name 关联。
+# pos 列是 numeric, 直接返回会被序列化成字符串, 显式转 float8 让 JSON 里是数字。
 _DEVICE_STATUS = text("""
     SELECT h.device_id,
            h.last_seen_at,
            h.uptime_ms,
-           EXTRACT(EPOCH FROM (now() - h.last_seen_at))::int AS age_seconds
+           EXTRACT(EPOCH FROM (now() - h.last_seen_at))::int AS age_seconds,
+           d.pos_x::float8 AS pos_x,
+           d.pos_y::float8 AS pos_y
     FROM device_heartbeats h
+    LEFT JOIN devices d ON d.name = h.device_id
     ORDER BY h.device_id
 """)
 

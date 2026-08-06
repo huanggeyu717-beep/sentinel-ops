@@ -12,7 +12,8 @@ from scenario import events_from_csv, events_from_yaml, resolve_epoch, to_payloa
 
 SIM_DIR = Path(__file__).resolve().parent.parent
 CSV = SIM_DIR / "seed" / "waterlevel_readings.csv"
-SCENARIO = SIM_DIR / "scenarios" / "multi_sensor_escalation.yaml"
+# 场景剧本在仓库根 scenarios/ (SPEC-005: API 的演练接口也要读)
+SCENARIO = SIM_DIR.parent.parent / "scenarios" / "multi_sensor_escalation.yaml"
 
 
 def test_load_csv__produces_sensor_events_and_synthetic_heartbeats():

@@ -13,7 +13,19 @@
 - AI 生成代码引入的缺陷, 在 docs/ai-development/defect-log.md 记录完整案例。
 
 ## 工程约定
-- Python 3.12 / ruff / mypy strict; TS strict。
+- Python 3.12 / ruff / mypy; TS strict。
+- mypy 分档: 应用与引擎代码开严格档, 测试默认档; 严格档逐模块打开,
+  白名单在 mypy.ini, 新模块补完标注后加入。理由与待补清单见 ADR-005。
 - 测试命名: test_<行为>__<条件>。评测 grader 必须确定性, 禁止 LLM judge。
 - 文档只用文字与 Markdown 结构表达状态 (完成 / 进行中 / 未开始), 强调用粗体;
   不用表情符号与装饰性图标。
+
+## 协作红线
+
+- **git 一律由本人执行**。AI 可以直接写文件、改代码, 但 `git add` / `git commit` /
+  `git push` / `git reset` / 任何改动仓库历史的命令, 都由本人在自己终端敲。
+  AI 只负责列出"这批改了哪些文件、建议的 commit message", 不代劳执行。
+  (背景: 通过文件桥接跑 git 会在 `.git/` 留下 `index.lock` 残留, 导致后续 git 报
+  `Unable to create '.git/index.lock': File exists`。)
+- 多个 AI 同时改同一个仓库时, **先划清文件边界再动手**。文件桥接是整文件写入,
+  没有合并, 谁后写谁赢 —— 覆盖前先比对校验和, 确认对方没在你取快照之后动过。
