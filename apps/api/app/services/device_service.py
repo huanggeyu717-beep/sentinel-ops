@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,12 +49,12 @@ _RECENT_READINGS = text("""
 """)
 
 
-async def sensor_status(session: AsyncSession) -> list[dict]:
+async def sensor_status(session: AsyncSession) -> list[dict[str, Any]]:
     rows = (await session.execute(_SENSOR_STATUS)).mappings().all()
     return [dict(r) for r in rows]
 
 
-async def device_status(session: AsyncSession) -> list[dict]:
+async def device_status(session: AsyncSession) -> list[dict[str, Any]]:
     timeout = settings().heartbeat_timeout_seconds
     rows = (await session.execute(_DEVICE_STATUS)).mappings().all()
     return [{**dict(r), "online": r["age_seconds"] <= timeout} for r in rows]
@@ -60,7 +62,7 @@ async def device_status(session: AsyncSession) -> list[dict]:
 
 async def recent_readings(
     session: AsyncSession, sensor_id: int | None = None, limit: int = 100
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     rows = (
         await session.execute(
             _RECENT_READINGS, {"sensor_id": sensor_id, "limit": min(limit, 1000)}
@@ -69,7 +71,7 @@ async def recent_readings(
     return [dict(r) for r in rows]
 
 
-async def counts(session: AsyncSession) -> dict:
+async def counts(session: AsyncSession) -> dict[str, Any]:
     """演示与冒烟测试用的一行式统计。"""
     row = (
         await session.execute(

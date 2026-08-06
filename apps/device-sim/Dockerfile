@@ -6,6 +6,10 @@ WORKDIR /srv
 COPY apps/device-sim/requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
 
+# 场景装载已抽到 packages/scenario (SPEC-005 方案 B), 写法与 api 装 policy_engine 一致
+COPY packages/scenario ./packages/scenario
+RUN pip install ./packages/scenario
+
 COPY apps/device-sim/ ./
 
 CMD ["python", "sim.py", "scenarios/basic_spill.yaml", "--base-url", "http://api:8000", "--speed", "5"]

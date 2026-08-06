@@ -1,4 +1,4 @@
-# 构建上下文是仓库根目录(见 docker-compose.yml), 因为 API 依赖 packages/policy_engine
+# 构建上下文是仓库根目录(见 docker-compose.yml), 因为 API 依赖 packages/ 下的本地包
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -13,6 +13,10 @@ RUN pip install -r requirements.txt
 
 COPY packages/policy_engine ./packages/policy_engine
 RUN pip install ./packages/policy_engine
+
+# 演练接口 (SPEC-005) 复用模拟器的场景装载
+COPY packages/scenario ./packages/scenario
+RUN pip install ./packages/scenario
 
 COPY apps/api/app ./app
 # 迁移相关: alembic.ini + 版本脚本 + W1 那两份被基线引用的 .sql 原文。

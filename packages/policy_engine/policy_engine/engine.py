@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 from .dsl import Policy
 
@@ -33,7 +33,7 @@ class Effect:
     ts_ms: int
     policy_name: str
     action_type: str
-    detail: dict
+    detail: dict[str, Any]
 
 
 @dataclass

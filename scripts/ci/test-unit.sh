@@ -4,6 +4,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ci_pip_install -r requirements-dev.txt
 ci_pip_install -e packages/policy_engine
+ci_pip_install -e packages/scenario
 
-section "pytest packages/policy_engine apps/device-sim"
-pytest packages/policy_engine apps/device-sim -q
+# packages/scenario 也要列进来: 它有自己的测试 (IO 边界断言), 不列的话
+# 以后往那个目录加的测试会静默地永远不执行 —— 和 mypy 检查目标漏加是同一类问题。
+section "pytest packages/policy_engine packages/scenario apps/device-sim"
+pytest packages/policy_engine packages/scenario apps/device-sim -q

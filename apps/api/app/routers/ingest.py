@@ -45,13 +45,18 @@ class IngestResponse(BaseModel):
     kind: str
     stored: bool
     state_updated: bool
+    # W2 事故联动 (SPEC-003): sensor_state 带 incident_id, rfid_scan 另带 matched/reason
+    incident_id: int | None = None
+    matched: bool | None = None
+    reason: str | None = None
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post("/ingest", response_model=IngestResponse, response_model_exclude_none=True)
 async def ingest(payload: IngestPayload, session: SessionDep) -> IngestResponse:
     result = await ingest_service.ingest_event(session, payload.model_dump())
     return IngestResponse(
-        ok=True, kind=result.kind, stored=result.stored, state_updated=result.state_updated
+        ok=True, kind=result.kind, stored=result.stored, state_updated=result.state_updated,
+        incident_id=result.incident_id, matched=result.matched, reason=result.reason,
     )
 
 

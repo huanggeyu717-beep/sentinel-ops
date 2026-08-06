@@ -7,6 +7,9 @@ eval fixtures / E2E 冒烟测试 共用同一份场景语义。
   1) YAML 场景包  —— 手写剧本, 相对时间轴, 用于确定性演示与回归测试
   2) CSV 历史回放 —— 回放原系统真实采集的读数 (队友仓库导出的 waterlevel_readings.csv)
 
+场景装载与时间轴换算在 packages/scenario (SPEC-005 方案 B 抽包, API 的演练接口
+复用同一份); 本文件只剩 命令行参数 / 按 --speed 推进时间 / HTTP 投递 / 进度打印。
+
 用法:
     # 剧本模式, 10 倍速
     python sim.py scenarios/basic_spill.yaml --speed 10
@@ -20,83 +23,23 @@ eval fixtures / E2E 冒烟测试 共用同一份场景语义。
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import sys
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+# 让 `python sim.py ...` 不经 pip install 也能找到仓库内的 scenario 包
+# (与根目录 pytest.ini 的 pythonpath 同理, 避免"换了解释器就 ModuleNotFoundError")。
+# Docker 里该包是 pip install 进镜像的, 这个目录不存在, 走正常导入。
+_SCENARIO_PKG = Path(__file__).resolve().parent.parent.parent / "packages" / "scenario"
+if _SCENARIO_PKG.is_dir():
+    sys.path.insert(0, str(_SCENARIO_PKG))
 
-HEARTBEAT_EVERY_S = 60  # 回放时按仿真时间每 60s 补一次心跳, 让 /status/devices 有数据
-
-
-@dataclass(slots=True)
-class Source:
-    name: str
-    events: list[dict[str, Any]]      # 每条含相对时间 at_s
-    origin_epoch_ms: int | None       # 数据自带的绝对起点; YAML 剧本没有, 为 None
-
-
-# --------------------------------------------------------------------------- 事件源
-
-
-def events_from_yaml(path: Path) -> Source:
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return Source(doc["name"], list(doc["events"]), None)
-
-
-def events_from_csv(path: Path, device_id: str | None) -> Source:
-    """真实读数 CSV -> 事件列表。
-
-    列: received_ts(ms), device_id, sensor_id, value, wet, raw(JSON, 内含 state)。
-    相对时间轴 = (本行 ts - 首行 ts) / 1000, 保持真实采样节奏。
-    """
-    rows = list(csv.DictReader(path.open(encoding="utf-8")))
-    if not rows:
-        raise SystemExit(f"{path} 里没有数据行")
-    base_ts = int(rows[0]["received_ts"])
-    events: list[dict[str, Any]] = []
-    next_hb = 0.0
-    for r in rows:
-        at_s = (int(r["received_ts"]) - base_ts) / 1000.0
-        dev = device_id or r.get("device_id") or "UNKNOWN_DEVICE"
-        try:
-            state = json.loads(r["raw"]).get("state")
-        except (json.JSONDecodeError, KeyError, TypeError):
-            state = "WET" if str(r.get("wet", "")).lower() == "true" else "DRY"
-        while at_s >= next_hb:  # 真实数据没有心跳报文, 按仿真时间补
-            events.append({"at_s": next_hb, "kind": "heartbeat", "device_id": dev,
-                           "uptime_ms": int(next_hb * 1000)})
-            next_hb += HEARTBEAT_EVERY_S
-        events.append({
-            "at_s": at_s,
-            "kind": "sensor_state",
-            "device_id": dev,
-            "sensor_id": int(r["sensor_id"]),
-            "state": state,
-            "value": int(r["value"]) if r.get("value") else None,
-        })
-    events.sort(key=lambda e: e["at_s"])
-    return Source(f"replay:{path.name}", events, base_ts)
-
-
-def load_source(source: str, device_id: str | None) -> Source:
-    path = Path(source)
-    if not path.exists():
-        raise SystemExit(f"找不到文件: {path}")
-    suffix = path.suffix.lower()
-    if suffix in {".yaml", ".yml"}:
-        return events_from_yaml(path)
-    if suffix == ".csv":
-        return events_from_csv(path, device_id)
-    raise SystemExit(f"不支持的数据源类型: {suffix} (只支持 .yaml/.yml/.csv)")
-
+from scenario import Source, load_source, resolve_epoch, to_payload  # noqa: E402
 
 # --------------------------------------------------------------------------- 发送
 
@@ -125,19 +68,6 @@ def wait_for_api(base_url: str, attempts: int = 30) -> None:
     raise SystemExit(f"API 一直没起来: {base_url}/health")
 
 
-def to_payload(ev: dict[str, Any], epoch_ms: int, time_scale: float = 1.0) -> dict[str, Any]:
-    """事件 -> /ingest 报文。
-
-    time_scale 决定事件时间戳是否随播放加速一起压缩:
-    - 1.0(live 默认按 1/speed 传入): 时间戳贴合墙上时钟, /status 的 age/online 才有意义;
-    - 1.0 且 --scenario-ts / batch 模式: 保留场景原始间隔, W3 的策略时间窗(如"3 分钟内")
-      才能被真实触发。两者不可兼得, 因此做成显式开关而不是猜。
-    """
-    payload = {k: v for k, v in ev.items() if k != "at_s" and v is not None}
-    payload["ts"] = epoch_ms + int(ev["at_s"] * 1000 * time_scale)
-    return payload
-
-
 def chunks(items: list[Any], size: int) -> Iterator[list[Any]]:
     for i in range(0, len(items), size):
         yield items[i : i + size]
@@ -164,18 +94,6 @@ def run_live(base_url: str, src: Source, epoch_ms: int, speed: float, time_scale
         flag = "" if res.get("stored") else "  (幂等命中, 未重复写入)"
         print(f"  t+{ev['at_s']:>8.1f}s {payload['kind']:<13} {tag}{flag}")
     print(f"[{src.name}] 回放结束")
-
-
-def resolve_epoch(src: Source, shift_to_now: bool) -> int:
-    """决定事件绝对时间戳的起点。
-
-    - YAML 剧本没有真实时间, 永远以"现在"为起点;
-    - CSV 默认保留其真实历史时间戳(便于分析真实数据);
-    - --shift-to-now 把整条时间轴平移到当前时刻, 演示时看起来像刚发生。
-    """
-    if shift_to_now or src.origin_epoch_ms is None:
-        return int(time.time() * 1000)
-    return src.origin_epoch_ms
 
 
 def main(argv: list[str] | None = None) -> int:

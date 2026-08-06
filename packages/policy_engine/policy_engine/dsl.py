@@ -8,7 +8,7 @@
 """
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -130,6 +130,6 @@ class Policy(BaseModel):
     cooldown_s: int = Field(ge=60, le=86400)
 
 
-def policy_json_schema() -> dict:
+def policy_json_schema() -> dict[str, Any]:
     """给 Agent prompt 和 contracts 用的 JSON Schema。"""
     return Policy.model_json_schema()

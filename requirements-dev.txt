@@ -5,6 +5,10 @@
 #   足以挡掉破坏性变更, 同时不强迫每台开发机同步升级。
 # 取舍全文见 docs/adr/ADR-005-pin-lint-toolchain.md。
 ruff==0.16.1
+mypy>=1.11,<3
 pytest>=8,<10
 pydantic>=2.8,<3
 PyYAML>=6,<7
+# PyYAML 的官方类型 stubs: mypy 严格档要检查 packages/scenario 里的 yaml 导入。
+# (asyncpg 是"没有官方 stubs"才在 mypy.ini 放行; PyYAML 有, 所以装而不是放行。)
+types-PyYAML>=6,<7

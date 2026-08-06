@@ -5,6 +5,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 ci_pip_install -r apps/api/requirements.txt -r requirements-dev.txt
 ci_pip_install -e packages/policy_engine
+ci_pip_install -e packages/scenario
 
 section "pytest apps/api/tests"
 pytest apps/api/tests -q

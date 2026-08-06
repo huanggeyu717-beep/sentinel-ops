@@ -14,3 +14,8 @@ else
   bash scripts/ci/check-tool-versions.sh
   ruff check "${TARGETS[@]}"
 fi
+
+# mypy 以前只在本机 make lint 里跑, CI 完全不跑 —— 等于它拦不住任何东西。
+# 放进这里之后, ruff 和 mypy 两道检查在本机与 CI 执行的是同一份脚本。
+section "mypy apps/api packages/policy_engine packages/scenario"
+mypy apps/api packages/policy_engine packages/scenario
