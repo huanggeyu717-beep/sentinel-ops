@@ -27,12 +27,12 @@ docker compose --profile demo up device-sim
 
 | 周 | 内容 | 状态 |
 |---|---|---|
-| W1 | 骨架 / Compose / CI / 迁移 / **device-sim** / `/ingest` / `/status` | ✅ 完成, 见 [SPEC-000](docs/specs/SPEC-000-w1-ingest.md) |
-| W2 | 事故生命周期 + RFID 接单 + JWT/RBAC + React Dashboard | ⏳ |
-| W3 | Policy DSL + 双层验证器 + 模拟器 + 版本化审批发布 | ⏳ |
-| W4 | Agent 编排 + Automation Studio (最早可投递点) | ⏳ |
-| W5 | 100 条评测集 + 消融实验 + Evals 面板 + 事故报告 | ⏳ |
-| W6 | OTel + 可靠性 + MCP server + 免费托管上线 + 文档 | ⏳ |
+| W1 | 骨架 / Compose / CI / 迁移 / **device-sim** / `/ingest` / `/status` | 完成, 见 [SPEC-000](docs/specs/SPEC-000-w1-ingest.md) |
+| W2 | 事故生命周期 + RFID 接单 + JWT/RBAC + React Dashboard | 进行中 |
+| W3 | Policy DSL + 双层验证器 + 模拟器 + 版本化审批发布 | 未开始 |
+| W4 | Agent 编排 + Automation Studio (最早可投递点) | 未开始 |
+| W5 | 100 条评测集 + 消融实验 + Evals 面板 + 事故报告 | 未开始 |
+| W6 | OTel + 可靠性 + MCP server + 免费托管上线 + 文档 | 未开始 |
 
 ## 为什么需要 Agent (而不是表单或聊天框)
 

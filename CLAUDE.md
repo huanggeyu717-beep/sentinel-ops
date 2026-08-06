@@ -15,3 +15,5 @@
 ## 工程约定
 - Python 3.12 / ruff / mypy strict; TS strict。
 - 测试命名: test_<行为>__<条件>。评测 grader 必须确定性, 禁止 LLM judge。
+- 文档只用文字与 Markdown 结构表达状态 (完成 / 进行中 / 未开始), 强调用粗体;
+  不用表情符号与装饰性图标。
