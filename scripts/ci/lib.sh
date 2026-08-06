@@ -18,5 +18,5 @@ ci_pip_install() {
 
 section() {
   echo ""
-  echo "▶ $*"
+  echo "==> $*"
 }
