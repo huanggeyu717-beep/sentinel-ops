@@ -1,0 +1,509 @@
+/* 全站颜色只从这里的变量取值。深色模式 = 覆盖变量 (含平面图的 --plan-*),
+   不用 filter: invert() 整体翻转。
+   状态色是保留色, 有配色验证依据 (红绿色盲模拟 ΔE=4.1 < 可辨认下限 8),
+   因此状态从不只靠颜色区分 —— 形状冗余编码在 FloorPlan 的标记里。 */
+:root {
+  --bg: #f5f4f0;
+  --surface: #ffffff;
+  --text: #1c1b18;
+  --text-muted: #6d6c66;
+  --border: #dedcd4;
+  --accent: #2456c4;
+  --accent-text: #ffffff;
+  --danger-bg: #fbeaea;
+
+  --status-ok: #0ca30c;
+  --status-leak: #d03b3b;
+  --status-lost: #8f8e88;
+
+  --plan-surface: #fcfcfb;
+  /* 三个责任区的地面色刻意各不相同, 且后场 (c) 最深 —— 那道墙后面顾客进不去 */
+  --plan-floor-a: #f2f1ec;
+  --plan-floor-b: #f8f7f4;
+  --plan-floor-c: #eae8e0;
+  --plan-equip: #e3e1d8;
+  --plan-rack: #dedcd4;
+  --plan-line: #c9c8c1;
+  --plan-label: #52514e;
+  --plan-label-muted: #78776f;
+}
+
+:root[data-theme='dark'] {
+  --bg: #161513;
+  --surface: #201f1c;
+  --text: #e8e6df;
+  --text-muted: #9b998f;
+  --border: #3a3833;
+  --accent: #6b96e8;
+  --accent-text: #161513;
+  --danger-bg: #3a2424;
+
+  --plan-surface: #1d1c1a;
+  --plan-floor-a: #262521;
+  --plan-floor-b: #2b2a25;
+  --plan-floor-c: #211f1c;
+  --plan-equip: #302e29;
+  --plan-rack: #3a3833;
+  --plan-line: #4c4a44;
+  --plan-label: #b5b3a8;
+  --plan-label-muted: #8a887d;
+}
+
+/* 跟随系统: 用户没手动选主题时 (data-theme 缺省), 按系统偏好套深色值 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #161513;
+    --surface: #201f1c;
+    --text: #e8e6df;
+    --text-muted: #9b998f;
+    --border: #3a3833;
+    --accent: #6b96e8;
+    --accent-text: #161513;
+    --danger-bg: #3a2424;
+
+    --plan-surface: #1d1c1a;
+    --plan-floor-a: #262521;
+    --plan-floor-b: #2b2a25;
+    --plan-floor-c: #211f1c;
+    --plan-equip: #302e29;
+    --plan-rack: #3a3833;
+    --plan-line: #4c4a44;
+    --plan-label: #b5b3a8;
+    --plan-label-muted: #8a887d;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'PingFang SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+button {
+  font: inherit;
+}
+
+/* ===== 顶栏 ===== */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 17px;
+  margin: 0;
+}
+
+.topbar .who {
+  color: var(--text-muted);
+}
+
+.topbar .who strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ===== 布局 ===== */
+
+.dashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 16px;
+  padding: 16px 20px;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.plan-card {
+  grid-column: 1 / -1;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  min-width: 0;
+}
+
+.card > h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+
+/* ===== 平面图 ===== */
+
+.plan-body {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.plan-svg-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-svg-wrap svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.marker {
+  cursor: pointer;
+}
+
+.marker:focus-visible {
+  outline: none;
+}
+
+.marker:focus-visible .focus-ring {
+  stroke: var(--accent);
+}
+
+.pulse-ring {
+  animation: pulse 1.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(2.3);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-ring {
+    animation: none;
+    opacity: 0.35;
+  }
+}
+
+.plan-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 10px;
+  color: var(--text-muted);
+}
+
+.plan-legend .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.unpositioned {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.unpositioned .item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 18px;
+  white-space: nowrap;
+}
+
+/* ===== 抽屉 ===== */
+
+.drawer {
+  width: 300px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.drawer-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0;
+}
+
+.kv dt {
+  color: var(--text-muted);
+}
+
+.kv dd {
+  margin: 0;
+}
+
+.mini-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.mini-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+}
+
+/* ===== 事故列表 ===== */
+
+.incident-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.incident-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 4px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.incident-table td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.incident-table tr.expandable {
+  cursor: pointer;
+}
+
+.incident-detail {
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 4px 0 8px;
+}
+
+.timeline {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline li {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+  border-top: 1px solid var(--border);
+}
+
+.timeline .t {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.badge.open {
+  color: var(--status-leak);
+  border-color: var(--status-leak);
+}
+
+.badge.assigned {
+  color: #b7791f;
+  border-color: #b7791f;
+}
+
+.badge.acknowledged {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.badge.resolved {
+  color: var(--status-ok);
+  border-color: var(--status-ok);
+}
+
+/* ===== 表单与按钮 ===== */
+
+.btn {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 7px;
+  padding: 5px 14px;
+  cursor: pointer;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.btn-sm {
+  padding: 2px 10px;
+  font-size: 13px;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.assign-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+input[type='text'],
+input[type='email'],
+input[type='password'],
+input[type='number'],
+select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 5px 10px;
+  font: inherit;
+}
+
+input:focus-visible,
+select:focus-visible,
+.btn:focus-visible,
+.btn-ghost:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.error-text {
+  color: var(--status-leak);
+  background: var(--danger-bg);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.small {
+  font-size: 12px;
+}
+
+/* ===== 演练面板 ===== */
+
+.drill-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.5s linear;
+}
+
+/* ===== 登录页 ===== */
+
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-card h1 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.login-card input {
+  width: 100%;
+}

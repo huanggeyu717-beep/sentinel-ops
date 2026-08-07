@@ -39,7 +39,7 @@ def test_ingest_sensor_state__writes_reading_and_state(client, hdr):
     sensors = client.get("/status/sensors", headers=hdr).json()["sensors"]
     one = next(s for s in sensors if s["sensor_id"] == 1)
     assert one["state"] == "WET" and one["wet"] is True and one["last_value"] == 845
-    assert one["zone_name"] == "Zone 1 - Entrance"  # 来自种子数据的关联
+    assert one["zone_name"] == "Zone 1 - 生鲜区"  # 来自种子数据的关联
 
 
 def test_ingest_same_event_twice__is_idempotent(client, hdr):

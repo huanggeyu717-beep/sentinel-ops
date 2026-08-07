@@ -134,22 +134,28 @@ _SEED_PASSWORD_HASH = "$2b$12$nqoRSMypSBq4CCcE3wrxFO2D0CxxYwvWTrl5sSyoJxFQ.69xOx
 
 DEV_SEED_SQL = f"""
 INSERT INTO zones (id, name) VALUES
-    (1,'Zone 1 - Entrance'),(2,'Zone 2 - Aisle'),(3,'Zone 3 - Storage')
+    (1,'Zone 1 - 生鲜区'),(2,'Zone 2 - 卖场中区'),(3,'Zone 3 - 后场')
     ON CONFLICT (id) DO NOTHING;
+-- zone 是**责任区 (谁巡这一片)**, 不是商品品类: 生鲜区里既有果蔬也有乳制品和熟食,
+-- 它们共用一个负责人与一台采集板。按品类分会分出十几个区, 而现场只有 3 台板子。
 -- 坐标是相对底图的百分比 0-100 (SPEC-005 前置 A), 按 zone 分区: 1 左 / 2 中 / 3 右。
+-- 每个坐标都压着底图上一个真实漏水源 (见 apps/web/.../PlanBase.tsx 的注释):
+-- 1 乳制品冷柜脚下 / 2 冷藏饮料柜脚下 / 3 冷冻岛柜之间的过道 / 4 制冰机下游 /
+-- 5 走入式冷库门口。4 刻意放在下游: 水顺地面坡度跑, 不一定积在源头。
 -- UNKNOWN_DEVICE 与它的占位传感器 0 刻意不填 —— 让前端"未定位"分支在演示数据里就能看见。
 -- 冲突时只 COALESCE 回填空缺, 不覆盖手工标注; 这样 W2 之前建的老库(行已存在,
 -- DO NOTHING 不会生效)也能拿到坐标, 而人工调过的位置不会被启动种子改回去。
 INSERT INTO devices (id, name, zone_id, pos_x, pos_y) VALUES
-    (1,'Arduino1',1,15.0,22.0),(2,'Arduino2',2,50.0,20.0),(3,'UNKNOWN_DEVICE',3,NULL,NULL)
+    (1,'Arduino1',1,12.40,19.67),(2,'Arduino2',2,52.20,19.67),
+    (3,'UNKNOWN_DEVICE',3,NULL,NULL)
     ON CONFLICT (id) DO UPDATE SET
         pos_x = COALESCE(devices.pos_x, EXCLUDED.pos_x),
         pos_y = COALESCE(devices.pos_y, EXCLUDED.pos_y);
 INSERT INTO sensors (id, device_id, zone_id, active, threshold_value, pos_x, pos_y) VALUES
     (0,3,3,true,500,NULL,NULL),
-    (1,1,1,true,500,12.0,60.0),(2,1,1,true,500,26.0,72.0),
-    (3,2,2,true,500,44.0,58.0),(4,2,2,true,500,58.0,70.0),
-    (5,3,3,true,500,84.0,64.0)
+    (1,1,1,true,500,11.80,34.17),(2,1,1,true,500,11.80,68.33),
+    (3,2,2,true,500,52.20,38.33),(4,2,2,true,500,60.00,71.67),
+    (5,3,3,true,500,84.00,47.50)
     ON CONFLICT (id) DO UPDATE SET
         pos_x = COALESCE(sensors.pos_x, EXCLUDED.pos_x),
         pos_y = COALESCE(sensors.pos_y, EXCLUDED.pos_y);

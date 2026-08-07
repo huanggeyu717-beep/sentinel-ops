@@ -83,6 +83,58 @@ def test_device_status__seed_leaves_one_device_unpositioned(client, hdr):
     assert rows["UNKNOWN_DEVICE"]["pos_x"] is None and rows["UNKNOWN_DEVICE"]["pos_y"] is None
 
 
+# ===== 平面图必须画出"装了的全部探头", 而不只是说过话的那些 =====
+# clean_telemetry 夹具在每条用例前 TRUNCATE 掉遥测表, 所以下面两条用例进来时
+# 数据库正好是"全新库 + 一条读数都没有"的状态 —— 也就是面试官第一次 make up 看到的样子。
+
+def test_sensor_status__lists_seeded_sensors_before_any_reading(client, hdr):
+    """一条读数都没有时, 6 个种子探头仍要全部列出, 且带着坐标。
+
+    这条是 SPEC-005 前置 A"全新库启动后 /status/sensors 带得出坐标"的直接翻译。
+    从 sensorstate 单向出发查会让这里返回空数组, 平面图开局是一张白图。
+    """
+    rows = {s["sensor_id"]: s for s in client.get("/status/sensors", headers=hdr).json()["sensors"]}
+    assert set(rows) >= {0, 1, 2, 3, 4, 5}
+    for sensor_id in (1, 2, 3, 4, 5):
+        row = rows[sensor_id]
+        assert row["never_reported"] is True
+        assert row["state"] is None and row["age_seconds"] is None
+        assert row["pos_x"] is not None and row["pos_y"] is not None
+    assert rows[0]["pos_x"] is None  # 占位传感器仍然走"未定位"分支
+
+
+def test_device_status__lists_seeded_devices_before_any_heartbeat(client, hdr):
+    """同理: 没有心跳时三台种子设备也要在列表里, 且一律 online=False。"""
+    rows = {d["device_id"]: d for d in client.get("/status/devices", headers=hdr).json()["devices"]}
+    assert {"Arduino1", "Arduino2", "UNKNOWN_DEVICE"} <= set(rows)
+    for row in rows.values():
+        assert row["never_reported"] is True
+        assert row["online"] is False       # age 是 NULL, 不能被算成"在线"
+        assert row["age_seconds"] is None
+
+
+def test_sensor_status__unregistered_sensor_still_appears(client, hdr):
+    """反方向: 现场冒出一个配置表里没有的探头号, 也必须看得见。
+
+    只从 sensors 配置表出发查会把它吞掉 —— 那才是真正危险的盲点。
+    """
+    client.post("/ingest", json={"kind": "sensor_state", "device_id": "X",
+                                 "ts": now_ms(), "sensor_id": 99, "value": 100})
+    row = next(s for s in client.get("/status/sensors", headers=hdr).json()["sensors"]
+               if s["sensor_id"] == 99)
+    assert row["never_reported"] is False   # 它上报过, 只是没登记
+    assert row["pos_x"] is None and row["zone_id"] is None
+
+
+def test_device_status__unregistered_device_still_appears(client, hdr):
+    """同理: 没登记的板子发心跳, 照样进列表 (走前端"未定位"区)。"""
+    client.post("/ingest", json={"kind": "heartbeat", "device_id": "Arduino9", "ts": now_ms()})
+    row = next(d for d in client.get("/status/devices", headers=hdr).json()["devices"]
+               if d["device_id"] == "Arduino9")
+    assert row["never_reported"] is False and row["online"] is True
+    assert row["pos_x"] is None
+
+
 def test_readings_endpoint__filters_by_sensor_and_orders_desc(client, hdr):
     ts = now_ms()
     client.post("/ingest/batch", json=[
