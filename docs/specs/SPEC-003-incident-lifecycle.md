@@ -33,7 +33,8 @@
              刷卡直接接单 (未预先分配也允许)                             │
                                                                        │
   任意未解决状态 ── 传感器连续干燥超过阈值 ──────────────────────────────┘
-                    (自动解决, resolved_by = auto_sensor_dry)
+              (W3 起由 Policy 引擎的 sensor_dry_for 触发器判定,
+               resolved_by = policy:{policy_id}@v{version})
 ```
 
 - `resolved` 是终态, 不可回退 (需要重开就开新事故, 保证时间线不被改写)。
@@ -47,6 +48,9 @@
 
 1. **谁来开事故**: W2 先用硬编码规则「`sensor_state` 转湿即开事故」, 写在
    `services/incident_service.py`。W3 由 Policy 引擎接管, 届时这段规则整体删除, 不做兼容层。
+   **已于 W3 第二段兑现** (SPEC-006 第四节): `apply_sensor_state()` 整体删除, 开单与关单
+   都归策略; 只拆出一个不做任何判断、只记时间线的 `record_sensor_observation()` ——
+   删的是判断逻辑, 保留的是事实记录 (决策 2、决策 4 的两类时间线因此不受影响)。
 2. **去重**: 同一 `sensor_id` 已存在未解决事故时**不再新开**, 只追加一条
    `incident_events(kind='sensor_still_wet')`。用 partial unique index 在数据库层兜底
    (`WHERE status <> 'resolved'`), 与 W1 的幂等思路一致 —— 约束下沉到 DB, 不靠应用层自觉。
@@ -60,14 +64,21 @@
    "派单命中率"(派给谁 == 实际谁接的比例)这类指标。
    `open → acknowledged` 跳过分配时, `assigned_employee_id` 保持为空, 不回填。
 4. **传感器持续干燥后自动解决, 但记录解决来源**。`incidents.resolved_by`:
-   人工解决记 `employee:{id}`, 自动解决记 `auto_sensor_dry`。
+   人工解决记 `employee:{id}` 或 `user:{id}`, 自动解决记
+   **`policy:{policy_id}@v{version}`** (W3 起; W2 那版记的是笼统的 `auto_sensor_dry`)。
+   新口径信息更多 —— 能追到是哪条策略的哪一个版本关的单。
+   **区分人工与自动的判据相应改为前缀**: 以 `policy:` 开头即自动, 以 `employee:` /
+   `user:` 开头即人工。下面"指标不失真"那条按新判据执行, 用途不变。
    - 取舍: 水干了不等于处理完 (可能只是蒸发、也可能是间歇性滴漏暂时停了),
      要求全人工则演示流程每次都得手点。区分来源后两边都成立。
    - **指标不失真**: "平均处理时长"只统计 `resolved_by` 以 `employee:` 开头的那批;
      自动解决的单独统计成"无人响应自愈率" —— 这个数本身就是有价值的运营指标,
      W5 的 Evals 面板分开展示。
-   - **稳定窗口**: 要求该传感器连续 `SENTINEL_AUTO_RESOLVE_DRY_SECONDS` (默认 300)
-     秒内没有再报湿才触发。读数在阈值附近抖动时, 否则会出现事故反复开关。
+   - **稳定窗口**: 要求该传感器连续一段时间没有再报湿才触发, 否则读数在阈值附近抖动时
+     事故会反复开关。W2 用全局配置 `SENTINEL_AUTO_RESOLVE_DRY_SECONDS` (默认 300);
+     **W3 起改由 Policy DSL 的 `sensor_dry_for` 触发器的 `dry_for_s` 参数表达**,
+     该配置项已删除。好处是可以按区配不同的值 —— 后场冷库地面本就潮, 与卖场中区
+     不该用同一个数。
    - 每次转干仍记一条 `incident_events(kind='sensor_dry')`, 无论是否达到自动解决条件。
 5. **`actor` 字段先占位**: SPEC-004 的 JWT 落地前, 手工接口的 actor 取
    `X-Actor` 请求头, 缺省 `"system"`; JWT 接入后改成从 token 取, 接口签名不变。
@@ -110,7 +121,8 @@
 - **带 `allow_cross_zone=true` 跨区派单成功**, 且 `audit_log` 里能查到 `cross_zone: true`;
 - **改派**: 已 `assigned` 的事故再次 assign 成功, 时间线出现 `reassigned` 且带前后两人;
 - 人工调 `/resolve` → `resolved_by = 'employee:3'`;
-- 传感器转干并保持超过阈值 → 事故自动变 `resolved` 且 `resolved_by = 'auto_sensor_dry'`;
+- 传感器转干并保持超过阈值 → 事故自动变 `resolved` 且 `resolved_by` 形如
+  `policy:{id}@v{n}` (W3 起; W2 那版是 `auto_sensor_dry`);
 - 传感器转干但未满阈值又转湿 → 事故仍未解决, 不产生关单;
 - 对 `resolved` 的事故再调 `/resolve` 返回 409;
 - 并发两次 `/resolve` 只有一个 200, 另一个 409;

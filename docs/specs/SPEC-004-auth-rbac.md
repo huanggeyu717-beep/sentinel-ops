@@ -38,7 +38,9 @@ CLAUDE.md 不变量 1 说的"publish 必须存在 approvals 记录"就是可伪�
 若这一列设成必填, 上面第一种和第三种都得靠编数据绕过去。
 
 落地后, actor 的口径统一成: 登录用户操作记 `user:{id}`, 刷卡记 `employee:{id}`,
-系统自动动作记 `system` / `auto_sensor_dry`。`audit_log.user_id` 只在前者有值。
+系统自动动作记 `system`; 策略引擎的动作记 `policy:{policy_id}@v{version}`
+(W3 起, 取代 W2 那版笼统的 `auto_sensor_dry`, 见 SPEC-003 决策 4)。
+`audit_log.user_id` 只在登录用户那一种口径下有值。
 
 ## 接口
 
@@ -88,7 +90,8 @@ CLAUDE.md 不变量 1 说的"publish 必须存在 approvals 记录"就是可伪�
    | 读 `/status/*`、`/incidents` | 是 | 是 | 是 | 是 |
    | `assign` / `acknowledge` / `resolve` | 否 | 是 | 是 | 是 |
    | **跨区派单 `allow_cross_zone=true`** | 否 | 否 | 是 | 是 |
-   | W3: 审批发布 policy | 否 | 否 | 是 | 是 |
+   | W3: 写策略草稿 / 静态校验 / 回放模拟 / 提交审批 (`policies:draft`) | 否 | 是 | 是 | 是 |
+   | W3: 审批 / 发布 / 撤销 policy (`policies:approve`) | 否 | 否 | 是 | 是 |
    | 用户与角色管理 | 否 | 否 | 否 | 是 |
 
    **跨区派单收归 manager** 是 SPEC-003 决策 7 的自然延伸: 那条决策把跨区从"禁止"

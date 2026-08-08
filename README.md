@@ -21,7 +21,8 @@ docker compose --profile demo up device-sim
 
 不想用 Docker 也可以裸跑: 起一个 Postgres, 设置 `SENTINEL_DATABASE_URL`, 然后
 `uvicorn app.main:app --reload` (在 `apps/api` 下) + `python sim.py ...`。
-建表由 API 启动时的迁移器完成, 三条路径共用同一份 `migrations/*.sql`。
+建表由 API 启动时的 Alembic 迁移完成 (W2 起, 见 [ADR-006](docs/adr/ADR-006-alembic-migrations.md)),
+裸跑 / CI / Docker 三条路径共用同一份迁移。
 
 ### 演示账号 (种子自动写入)
 
@@ -30,6 +31,8 @@ docker compose --profile demo up device-sim
 | `admin@example.com` | `sentinel-demo` | admin (不绑现场员工) |
 | `chris@example.com` | `sentinel-demo` | manager (绑员工 Chris Li) |
 | `alex@example.com` | `sentinel-demo` | operator (绑员工 Alex Chen) |
+| `dana@example.com` | `sentinel-demo` | manager (第二位 —— manager 自己写的策略必须由另一位批) |
+| `viewer@example.com` | `sentinel-demo` | viewer (只读) |
 
 `POST /auth/login` 登录后会话放在 httpOnly cookie 里, 浏览器里的 `/docs` 直接可用;
 curl 场景可从登录响应的 `Set-Cookie` 取 token, 以 `Authorization: Bearer` 请求头携带。
@@ -40,8 +43,8 @@ curl 场景可从登录响应的 `Set-Cookie` 取 token, 以 `Authorization: Bea
 | 周 | 内容 | 状态 |
 |---|---|---|
 | W1 | 骨架 / Compose / CI / 迁移 / **device-sim** / `/ingest` / `/status` | 完成, 见 [SPEC-000](docs/specs/SPEC-000-w1-ingest.md) |
-| W2 | 事故生命周期 + RFID 接单 + JWT/RBAC + React Dashboard | 进行中 |
-| W3 | Policy DSL + 双层验证器 + 模拟器 + 版本化审批发布 | 未开始 |
+| W2 | 事故生命周期 + RFID 接单 + JWT/RBAC + React Dashboard | 完成, 见 [SPEC-003](docs/specs/SPEC-003-incident-lifecycle.md) / [SPEC-004](docs/specs/SPEC-004-auth-rbac.md) / [SPEC-005](docs/specs/SPEC-005-dashboard.md) |
+| W3 | Policy DSL + 双层验证器 + 引擎/模拟器 + 版本化审批发布 | 完成, 见 [SPEC-001](docs/specs/SPEC-001-policy-dsl.md) / [SPEC-006](docs/specs/SPEC-006-policy-lifecycle.md) |
 | W4 | Agent 编排 + Automation Studio (最早可投递点) | 未开始 |
 | W5 | 100 条评测集 + 消融实验 + Evals 面板 + 事故报告 | 未开始 |
 | W6 | OTel + 可靠性 + MCP server + 免费托管上线 + 文档 | 未开始 |
