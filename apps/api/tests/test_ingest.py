@@ -10,6 +10,11 @@ import pytest
 TS = 1_773_600_000_000
 
 
+@pytest.fixture(autouse=True)
+def _engine_baseline(published_baseline):
+    """W3 后开事故由策略引擎接管 (SPEC-006), incident_id 断言依赖基线 wet->open 策略。"""
+
+
 @pytest.fixture(scope="module")
 def hdr(auth_headers):
     return auth_headers("alex@example.com")

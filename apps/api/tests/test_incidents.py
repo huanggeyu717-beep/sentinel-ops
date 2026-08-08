@@ -1,10 +1,15 @@
-"""W2 验收: 事故生命周期状态机 + RFID 接单 + 自动解决。对应 docs/specs/SPEC-003。
+"""W2 验收: 事故生命周期状态机 + RFID 接单。对应 docs/specs/SPEC-003。
 
 传感器与区域来自种子数据: sensor 1 在 Zone 1 (Arduino1), sensor 4 在 Zone 2 (Arduino2)。
-Alex(employee 1) 的卡 04A1B2C3。时间戳全部显式给出, 自动解决的稳定窗口默认 300s。
+Alex(employee 1) 的卡 04A1B2C3。时间戳全部显式给出。
 
 SPEC-004 后所有 /incidents 接口都要登录: 用例默认以 manager Chris (user 2, 绑员工 3)
 操作; 权限矩阵 (403/422 的边界) 的专门用例在 test_auth.py。
+
+W3 (SPEC-006) 后开事故由策略引擎接管: 本文件依赖 published_baseline 夹具注入的
+wet->open 基线策略。按稳定窗口自动关单的行为改由 sensor_dry_for 策略实现,
+对应用例挪到 test_policy_runtime.py (需要显式注入 tick); 这里保留的是 SPEC-003
+的**事实记录**验收 —— sensor_still_wet / sensor_dry 时间线与删掉的判断逻辑无关。
 """
 from __future__ import annotations
 
@@ -17,7 +22,11 @@ import asyncpg
 import pytest
 
 TS = 1_773_600_000_000
-WINDOW_MS = 300 * 1000
+
+
+@pytest.fixture(autouse=True)
+def _engine_baseline(published_baseline):
+    """开事故由引擎接管后, 本文件全部用例都需要已发布的 wet->open 基线策略。"""
 
 
 @pytest.fixture(scope="module")
@@ -99,18 +108,20 @@ def test_wet_again__appends_still_wet_without_new_incident(client, mgr):
 
 
 def test_wet_after_resolved__opens_new_incident(client, mgr):
+    """resolved 是终态, 重开 = 开新事故。引擎是边沿触发, 先转干再转湿才有新的边沿。"""
     first = open_incident(client)
-    client.post("/ingest", json=sensor_event(ts=TS + WINDOW_MS + 1_000, state="DRY", value=90))
-    assert get_incident(client, first, mgr)["incident"]["status"] == "resolved"
+    client.post(f"/incidents/{first}/resolve", headers=mgr)
+    client.post("/ingest", json=sensor_event(ts=TS + 60_000, state="DRY", value=90))
 
-    second = open_incident(client, ts=TS + WINDOW_MS + 60_000)
+    second = open_incident(client, ts=TS + 180_000)
     assert second != first
     assert len(client.get("/incidents", headers=mgr).json()["incidents"]) == 2
 
 
-# ===== 自动解决 =====
+# ===== 遥测事实的时间线记录 (SPEC-006 保留项: 删的是判断逻辑, 不是事实记录) =====
 
-def test_dry_within_window__keeps_incident_open(client, mgr):
+def test_dry__appends_sensor_dry_and_does_not_close(client, mgr):
+    """每次转干仍记一条 sensor_dry (决策 4); 没有关单策略在线, 引擎不会关单。"""
     incident_id = open_incident(client)
     client.post("/ingest", json=sensor_event(ts=TS + 60_000, state="DRY", value=90))
 
@@ -118,27 +129,18 @@ def test_dry_within_window__keeps_incident_open(client, mgr):
     assert timeline_kinds(client, incident_id, mgr) == ["opened", "sensor_dry"]
 
 
-def test_auto_resolve__fires_when_dry_window_met(client, mgr):
-    incident_id = open_incident(client)
-    client.post("/ingest", json=sensor_event(ts=TS + WINDOW_MS + 1_000, state="DRY", value=90))
-
-    one = get_incident(client, incident_id, mgr)["incident"]
-    assert one["status"] == "resolved"
-    assert one["resolved_by"] == "auto_sensor_dry"
-    assert one["resolved_at"] is not None
-    assert timeline_kinds(client, incident_id, mgr) == ["opened", "sensor_dry", "resolved"]
-
-
-def test_auto_resolve__skipped_when_dry_window_not_met(client, mgr):
-    """转干未满窗口又转湿: 不关单, 也不重复开单。"""
+def test_dry_then_wet_again__no_duplicate_incident(client, mgr):
+    """转干又转湿: 引擎再次产出 open_incident, 撞 partial unique index 即空操作,
+    时间线只累加事实, 不重复开单。"""
     incident_id = open_incident(client)
     client.post("/ingest", json=sensor_event(ts=TS + 100_000, state="DRY", value=90))
-    client.post("/ingest", json=sensor_event(ts=TS + 150_000))  # 又湿了
-    # 距上一次湿只有 50s < 300s, 不触发自动解决
-    client.post("/ingest", json=sensor_event(ts=TS + 200_000, state="DRY", value=90))
+    client.post("/ingest", json=sensor_event(ts=TS + 170_000))  # 又湿了 (170s > 冷却 60s)
 
     assert get_incident(client, incident_id, mgr)["incident"]["status"] == "open"
     assert len(client.get("/incidents", headers=mgr).json()["incidents"]) == 1
+    assert timeline_kinds(client, incident_id, mgr) == [
+        "opened", "sensor_dry", "sensor_still_wet"
+    ]
 
 
 # ===== 手工流转 =====

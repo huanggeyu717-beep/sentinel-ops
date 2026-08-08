@@ -20,9 +20,15 @@ class Settings(BaseSettings):
     heartbeat_timeout_seconds: int = 60  # 沿用 legacy status-api Lambda 的在线判定语义
     default_wet_threshold: int = 500     # 事件未带 state 时, 由 value 推导 wet 的兜底阈值
 
-    # --- W2 事故生命周期 (SPEC-003) ---
-    # 传感器连续干燥超过该秒数才自动解决事故, 防止读数在阈值附近抖动时事故反复开关
-    auto_resolve_dry_seconds: int = 300
+    # --- W3 策略引擎 (SPEC-006) ---
+    # 引擎 tick 间隔 (秒)。必须与回放模块的 DEFAULT_TICK_SECONDS 保持一致,
+    # 否则模拟结果对线上没有预测力 (SPEC-001 第一节)。
+    # W2 的自动关单稳定窗口配置项已整体删除: 其职责归 sensor_dry_for 触发器的
+    # dry_for_s 参数, 且现在可以按区配不同的值 (SPEC-006 第四节)。
+    engine_tick_seconds: int = 10
+    # 引擎状态里已解决事故的保留条数, 超出丢最旧 (SPEC-001 第四节末: 内存必须有
+    # 上界)。未解决的不受此限 —— 数量由数据库的 partial unique index 封顶。
+    engine_incident_history: int = 200
 
     # --- W2 Dashboard 演练 (SPEC-005 前置 B) ---
     drill_speed: float = 10.0     # 演练回放的加速倍率 (与 make sim 一致), 回显在 GET /drills/{id}

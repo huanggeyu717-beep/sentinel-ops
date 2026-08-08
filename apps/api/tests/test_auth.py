@@ -27,6 +27,11 @@ TS = 1_773_600_000_000
 CHRIS = {"email": "chris@example.com", "password": SEED_PASSWORD}
 
 
+@pytest.fixture(autouse=True)
+def _engine_baseline(published_baseline):
+    """W3 后开事故由策略引擎接管 (SPEC-006), open_incident 助手依赖基线策略。"""
+
+
 def dsn() -> str:
     return os.environ["SENTINEL_DATABASE_URL"].replace("+asyncpg", "")
 

@@ -16,7 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from . import incident_service
+from . import incident_service, policy_runtime
 
 
 @dataclass(slots=True)
@@ -24,10 +24,18 @@ class IngestResult:
     kind: str
     stored: bool          # 是否新写入(False = 幂等命中或被乱序保护拒绝)
     state_updated: bool    # 是否推进了当前状态
-    # --- W2 事故联动 (SPEC-003), 仅 sensor_state / rfid_scan 会填 ---
+    # --- 事故联动: W2 起 sensor_state / rfid_scan 会填, W3 起由策略引擎产生 ---
     incident_id: int | None = None   # 本次事件开出/推进的事故
     matched: bool | None = None      # rfid_scan: 是否成功接单
     reason: str | None = None        # rfid_scan 未接单的原因码
+
+
+def _first_incident(applied: list[policy_runtime.AppliedEffect]) -> int | None:
+    """本轮 Effect 里第一个真正作用到的事故 id (回显给 /ingest 响应)。"""
+    for ae in applied:
+        if ae.outcome == "applied" and ae.incident_id is not None:
+            return ae.incident_id
+    return None
 
 
 def derive_wet(state: str | None, value: int | None) -> bool:
@@ -107,10 +115,17 @@ async def handle_sensor_state(session: AsyncSession, ev: dict[str, Any]) -> Inge
     stored = (await session.execute(_INSERT_READING, params)).scalar_one_or_none() is not None
     updated = (await session.execute(_UPSERT_SENSORSTATE, params)).scalar_one_or_none() is not None
     incident_id = None
-    if updated:  # 乱序被拒的旧事件不触发事故联动
-        incident_id = await incident_service.apply_sensor_state(
+    if updated:  # 乱序被拒的旧事件不进时间线, 也不进引擎
+        # 先记遥测事实 (sensor_still_wet / sensor_dry, SPEC-003 决策 2/4),
+        # 再喂引擎 —— 顺序不能反: 引擎开出的新事故不该在开单同一事件上多出一条 still_wet
+        incident_id = await incident_service.record_sensor_observation(
             session, ev["sensor_id"], wet, ev["ts"]
         )
+        applied = await policy_runtime.runtime().on_telemetry(
+            session, kind="sensor_state", ts=ev["ts"], device_id=ev["device_id"],
+            sensor_id=ev["sensor_id"], state=state,
+        )
+        incident_id = _first_incident(applied) or incident_id
     return IngestResult("sensor_state", stored, updated, incident_id=incident_id)
 
 
@@ -122,6 +137,10 @@ async def handle_heartbeat(session: AsyncSession, ev: dict[str, Any]) -> IngestR
         "raw": json.dumps(ev, ensure_ascii=False),
     }
     updated = (await session.execute(_UPSERT_HEARTBEAT, params)).scalar_one_or_none() is not None
+    if updated:  # device_offline 触发器靠 last_seen 投影, 心跳也要进引擎
+        await policy_runtime.runtime().on_telemetry(
+            session, kind="heartbeat", ts=ev["ts"], device_id=ev["device_id"]
+        )
     return IngestResult("heartbeat", updated, updated)
 
 
@@ -140,6 +159,10 @@ async def handle_rfid_scan(session: AsyncSession, ev: dict[str, Any]) -> IngestR
     match = await incident_service.acknowledge_by_rfid(
         session, ev["device_id"], ev["rfid_uid"], ev["ts"]
     )
+    await policy_runtime.runtime().on_telemetry(
+        session, kind="rfid_scan", ts=ev["ts"], device_id=ev["device_id"],
+        rfid_uid=ev["rfid_uid"],
+    )
     return IngestResult(
         "rfid_scan", True, True,
         incident_id=match.incident_id, matched=match.matched, reason=match.reason,
@@ -154,6 +177,6 @@ HANDLERS = {
 
 
 async def ingest_event(session: AsyncSession, ev: dict[str, Any]) -> IngestResult:
-    """W1 落库; W2 起在同一事务里联动事故生命周期 (SPEC-003)。
-    W3 起在这里把事件投递给 Policy 引擎消费队列。"""
+    """W1 落库; W2 起在同一事务里记事故时间线 (SPEC-003);
+    W3 起在同一事务里喂策略引擎并就地应用 Effect (SPEC-006)。"""
     return await HANDLERS[ev["kind"]](session, ev)

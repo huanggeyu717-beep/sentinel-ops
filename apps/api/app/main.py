@@ -5,9 +5,10 @@ W1 目标: /health + /ingest 落库 + /status 查询。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 from fastapi import FastAPI
@@ -15,8 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import apply_dev_seed, run_migrations
-from .routers import auth, drills, incidents, ingest, status
-from .services import auth_service
+from .routers import auth, drills, employees, incidents, ingest, policies, status
+from .services import auth_service, policy_runtime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("sentinel")
@@ -32,7 +33,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings().apply_dev_seed:
         await apply_dev_seed()
         log.info("dev seed applied")
-    yield
+    # W3: 策略引擎 tick 后台任务 (SPEC-006 第四节)。多实例会重复 tick 的边界
+    # 与关停语义见 policy_runtime.tick_loop 的 docstring。
+    tick_task = asyncio.create_task(policy_runtime.tick_loop(), name="engine-tick")
+    try:
+        yield
+    finally:
+        # 干净取消: 不 cancel 会让测试与 uvicorn 关停时挂在这个永续任务上
+        tick_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await tick_task
 
 
 app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
@@ -48,7 +58,9 @@ app.include_router(ingest.router)
 app.include_router(status.router)
 app.include_router(incidents.router)
 app.include_router(drills.router)
-# W3: policies; W4: agent_tasks(+SSE)
+app.include_router(policies.router)
+app.include_router(employees.router)
+# W4: agent_tasks(+SSE)
 
 
 @app.get("/health")

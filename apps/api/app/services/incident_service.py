@@ -9,12 +9,13 @@
    (`(sensor_id) WHERE status <> 'resolved'`) 兜底, 不靠应用层自觉;
 3. **同一事务写全三处**: 状态更新 + incident_events(事实时间线) + audit_log(审计),
    session 由每请求一个事务的 get_session 提供, 任何一步失败整体回滚;
-4. **开事故规则是 W2 硬编码占位**(sensor_state 转湿即开), W3 由 Policy 引擎接管后
-   整体删除, 不做兼容层;
-5. **自动解决是事件驱动的**: 干燥事件到达时, 距最后一条湿读数超过稳定窗口
-   (SENTINEL_AUTO_RESOLVE_DRY_SECONDS) 才关单, resolved_by='auto_sensor_dry'。
-   代价: "最后一条上报是干、之后彻底静默"的传感器不会被自动关单 —— 可接受,
-   真实传感器按周期上报, 彻底静默会先变成心跳离线告警;
+4. **开单/关单/升级由 Policy 引擎接管** (SPEC-006 第四节, W2 的硬编码规则已整体
+   删除、不留兼容层): 本模块只提供带幂等保证的执行原语 open_incident /
+   close_incident / escalate_incident, 判断逻辑全部在已发布的策略里;
+5. **状态推进与域事件同一事务**: 每次推进除了 incident_events + audit_log,
+   还向 policy_runtime 投递一条域事件 (incident_opened/assigned/acknowledged/
+   resolved)。投递挂在事务提交上 —— 事务回滚则事件不存在, 引擎看到的与
+   数据库里的永远一致, 这是"事件流是引擎唯一输入"成立的前提;
 6. **"派给谁"与"谁实际接的单"是两个字段** (SPEC-003 修订 1):
    assigned_employee_id 记指派, acknowledged_by_employee_id 记实际接单人,
    跳过分配直接接单时前者保持为空, 不回填;
@@ -26,13 +27,12 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from ..config import settings
 
 
 class IncidentNotFound(Exception):
@@ -156,8 +156,8 @@ def _user_from_actor(actor: str) -> int | None:
     """actor 形如 user:2 (登录用户) 时提取其 user id, 其余口径返回 None。
 
     SPEC-004 统一后的 actor 口径: 登录用户记 user:{id}, 刷卡记 employee:{id},
-    系统动作记 system / auto_sensor_dry。audit_log.user_id 只在第一种时有值 ——
-    后两种本来就不对应任何登录账号。
+    策略动作记 policy:{policy_id}@v{version} (SPEC-006 对 SPEC-003 的修订 1)。
+    audit_log.user_id 只在第一种时有值 —— 后两种本来就不对应任何登录账号。
     """
     prefix, _, suffix = actor.partition(":")
     if prefix == "user" and suffix.isdigit():
@@ -205,81 +205,183 @@ async def _audit(
     )
 
 
-# ===== 传感器事件驱动的开单 / 自动关单 (W2 硬编码规则, W3 由 Policy 引擎接管) =====
+# ===== 域事件投递 (SPEC-006 第四节) =====
 
-_OPEN = text("""
-    INSERT INTO incidents (zone_id, sensor_id, status, opened_at)
-    VALUES (
-        (SELECT zone_id FROM sensors WHERE id = :sensor_id),
-        :sensor_id, 'open', to_timestamp(CAST(:ts AS bigint) / 1000.0)
-    )
-    ON CONFLICT (sensor_id) WHERE status <> 'resolved' DO NOTHING
-    RETURNING id
+# 投递给 policy_runtime 的域事件先攒在 session.info 里, 由 policy_runtime 注册的
+# after_commit 监听器在**提交成功后**搬进引擎的待消费队列; 回滚则随事务一起消失。
+# 这样"引擎看到的事件"与"数据库里的事实"永远一致。用 session.info 中转而不是直接
+# import policy_runtime, 也顺便断开了两个模块的循环依赖 (policy_runtime 要 import
+# 本模块的执行原语)。
+DOMAIN_EVENTS_INFO_KEY = "sentinel_domain_events"
+
+_DEVICE_NAME_BY_SENSOR = text("""
+    SELECT d.name FROM sensors s JOIN devices d ON d.id = s.device_id WHERE s.id = :sensor_id
 """)
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _deliver_domain_event(
+    session: AsyncSession,
+    kind: str,
+    incident_id: int,
+    ts: int | None,
+    sensor_id: int | None = None,
+    zone_id: int | None = None,
+    device_id: str | None = None,
+) -> None:
+    """向引擎投递一条域事件 (incident_opened/assigned/acknowledged/resolved)。
+
+    ts 为 epoch 毫秒; 手工接口没有事件时间戳时取墙上时钟, 与对应行的 now() 同源近似。
+    """
+    events: list[dict[str, Any]] = session.sync_session.info.setdefault(
+        DOMAIN_EVENTS_INFO_KEY, []
+    )
+    events.append(
+        {
+            "ts_ms": ts if ts is not None else _now_ms(),
+            "kind": kind,
+            "incident_id": incident_id,
+            "sensor_id": sensor_id,
+            "zone_id": zone_id,
+            "device_id": device_id,
+        }
+    )
+
+
+# ===== 遥测时间线 (事实记录, 不做任何判断) =====
 
 _FIND_UNRESOLVED = text("""
     SELECT id, status FROM incidents WHERE sensor_id = :sensor_id AND status <> 'resolved'
 """)
 
-_LAST_WET_TS = text("""
-    SELECT max(received_ts) FROM waterlevel_readings WHERE sensor_id = :sensor_id AND wet
-""")
 
-_AUTO_RESOLVE = text("""
-    UPDATE incidents
-    SET status = 'resolved',
-        resolved_at = to_timestamp(CAST(:ts AS bigint) / 1000.0),
-        resolved_by = 'auto_sensor_dry'
-    WHERE id = :id AND status <> 'resolved'
-    RETURNING id
-""")
-
-
-async def apply_sensor_state(
+async def record_sensor_observation(
     session: AsyncSession, sensor_id: int, wet: bool, ts: int
 ) -> int | None:
-    """传感器状态推进后的事故联动。返回受影响的事故 id, 无关联事故时返回 None。
+    """sensorstate 被推进后, 往未解决事故的时间线追加一条遥测事实。
 
-    只应在 sensorstate 真正被推进时调用(乱序被拒的旧事件不进这里)。
+    不开单、不关单、不改任何状态 —— 判断逻辑全部归策略引擎 (SPEC-006 第四节)。
+    保留的两类记录是 SPEC-003 决策 2/4 的验收依赖:
+    - 持续报湿 -> sensor_still_wet (不新增事故, 时间线累加);
+    - 每次转干 -> sensor_dry (无论是否达到关单条件)。
+    返回关联的事故 id; 该传感器没有未解决事故时什么都不做, 返回 None。
     """
-    if wet:
-        opened: int | None = (
-            await session.execute(_OPEN, {"sensor_id": sensor_id, "ts": ts})
-        ).scalar_one_or_none()
-        if opened is not None:
-            await _record(session, opened, "opened", "system", {"sensor_id": sensor_id}, ts)
-            await _audit(session, "incident.open", opened, "system", {"sensor_id": sensor_id})
-            return opened
-        # 已有未解决事故: 不新开, 只累加时间线 (决策 2)
-        row = (await session.execute(_FIND_UNRESOLVED, {"sensor_id": sensor_id})).mappings().first()
-        if row is None:  # 与并发 resolve 撞上的窄窗口, 下一条湿事件会重新开单
-            return None
-        still_open_id: int = row["id"]
-        await _record(session, still_open_id, "sensor_still_wet", "system", None, ts)
-        return still_open_id
-
-    # 转干: 无论是否达到自动解决条件, 都记一条 sensor_dry (决策 4)
     row = (await session.execute(_FIND_UNRESOLVED, {"sensor_id": sensor_id})).mappings().first()
     if row is None:
         return None
     incident_id: int = row["id"]
-    await _record(session, incident_id, "sensor_dry", "system", None, ts)
-
-    last_wet_ts = (
-        await session.execute(_LAST_WET_TS, {"sensor_id": sensor_id})
-    ).scalar_one_or_none()
-    window_ms = settings().auto_resolve_dry_seconds * 1000
-    if last_wet_ts is not None and ts - last_wet_ts < window_ms:
-        return incident_id  # 稳定窗口未满, 不关单
-
-    resolved = (
-        await session.execute(_AUTO_RESOLVE, {"id": incident_id, "ts": ts})
-    ).scalar_one_or_none()
-    if resolved is not None:
-        detail = {"dry_for_ms": None if last_wet_ts is None else ts - last_wet_ts}
-        await _record(session, incident_id, "resolved", "auto_sensor_dry", detail, ts)
-        await _audit(session, "incident.auto_resolve", incident_id, "auto_sensor_dry", detail)
+    await _record(session, incident_id, "sensor_still_wet" if wet else "sensor_dry",
+                  "system", None, ts)
     return incident_id
+
+
+# ===== 引擎 Effect 的执行原语 (唯一产生副作用的地方, 幂等, SPEC-006 第四节) =====
+
+_OPEN = text("""
+    INSERT INTO incidents (zone_id, sensor_id, severity, status, opened_at)
+    VALUES (
+        (SELECT zone_id FROM sensors WHERE id = :sensor_id),
+        :sensor_id, :severity, 'open', to_timestamp(CAST(:ts AS bigint) / 1000.0)
+    )
+    ON CONFLICT (sensor_id) WHERE status <> 'resolved' DO NOTHING
+    RETURNING id, zone_id
+""")
+
+_CLOSE = text("""
+    UPDATE incidents
+    SET status = 'resolved',
+        resolved_at = to_timestamp(CAST(:ts AS bigint) / 1000.0),
+        resolved_by = :actor
+    WHERE id = :id AND status <> 'resolved'
+    RETURNING id
+""")
+
+# 只允许往上升: 目标等级已达到(或更高)时 0 行, 幂等空操作
+_ESCALATE = text("""
+    UPDATE incidents
+    SET severity = :to_severity
+    WHERE id = :id AND status <> 'resolved'
+      AND array_position(ARRAY['normal','high','critical'], severity)
+        < array_position(ARRAY['normal','high','critical'], :to_severity)
+    RETURNING id
+""")
+
+
+async def open_incident(
+    session: AsyncSession, sensor_id: int, severity: str, ts: int, actor: str
+) -> int | None:
+    """开事故。同一传感器已有未解决事故时撞 partial unique index, 幂等空操作返回 None。
+
+    zone 取 sensors 表的关联, 不信任事件里的 zone_id (与 W2 同口径)。
+    """
+    row = (
+        await session.execute(_OPEN, {"sensor_id": sensor_id, "severity": severity, "ts": ts})
+    ).mappings().one_or_none()
+    if row is None:
+        return None
+    opened: int = row["id"]
+    await _record(session, opened, "opened", actor, {"sensor_id": sensor_id}, ts)
+    await _audit(session, "incident.open", opened, actor, {"sensor_id": sensor_id})
+    device_name: str | None = (
+        await session.execute(_DEVICE_NAME_BY_SENSOR, {"sensor_id": sensor_id})
+    ).scalar_one_or_none()
+    # incident_opened 必须带 device_id, 否则由事故唤醒的策略产不出 set_led (SPEC-001)
+    _deliver_domain_event(
+        session, "incident_opened", opened, ts,
+        sensor_id=sensor_id, zone_id=row["zone_id"], device_id=device_name,
+    )
+    return opened
+
+
+async def close_incident(
+    session: AsyncSession, incident_id: int, ts: int, actor: str,
+    detail: dict[str, Any] | None = None,
+) -> int | None:
+    """关事故。已 resolved 即幂等空操作返回 None。
+
+    actor 记 policy:{policy_id}@v{version} (SPEC-006 对 SPEC-003 的修订 1):
+    自动解决的判据从"等于 auto_sensor_dry"改成"以 policy: 开头"。
+    """
+    closed: int | None = (
+        await session.execute(_CLOSE, {"id": incident_id, "ts": ts, "actor": actor})
+    ).scalar_one_or_none()
+    if closed is None:
+        return None
+    await _record(session, incident_id, "resolved", actor, detail, ts)
+    await _audit(session, "incident.resolve", incident_id, actor, detail)
+    _deliver_domain_event(session, "incident_resolved", incident_id, ts)
+    return closed
+
+
+async def escalate_incident(
+    session: AsyncSession, incident_id: int, to_severity: str, ts: int, actor: str
+) -> int | None:
+    """升级 severity。目标等级已达到或事故已 resolved 即幂等空操作返回 None。
+
+    只改 severity 不改 status, 所以不投递域事件 (引擎的事故投影不含 severity)。
+    """
+    escalated: int | None = (
+        await session.execute(
+            _ESCALATE, {"id": incident_id, "to_severity": to_severity}
+        )
+    ).scalar_one_or_none()
+    if escalated is None:
+        return None
+    await _record(session, incident_id, "escalated", actor, {"to_severity": to_severity}, ts)
+    await _audit(session, "incident.escalate", incident_id, actor, {"to_severity": to_severity})
+    return escalated
+
+
+async def record_policy_decision(
+    session: AsyncSession, incident_id: int, kind: str, ts: int, actor: str,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    """notify / set_led 的时间线留痕: W3 不接真实外发通道 (SPEC-006 第四节),
+    但事故时间线要看得见"系统在这一刻决定通知谁/点哪盏灯"。"""
+    await _record(session, incident_id, kind, actor, detail, ts)
 
 
 # ===== 手工流转 =====
@@ -383,6 +485,7 @@ async def assign(
         }
     await _record(session, incident_id, kind, actor, detail)
     await _audit(session, "incident.assign", incident_id, actor, audit_detail)
+    _deliver_domain_event(session, "incident_assigned", incident_id, None)
     return await get_incident(session, incident_id)
 
 
@@ -410,6 +513,7 @@ async def acknowledge(
         raise TransitionConflict(current)
     await _record(session, incident_id, "acknowledged", actor, detail, ts)
     await _audit(session, "incident.acknowledge", incident_id, actor, detail)
+    _deliver_domain_event(session, "incident_acknowledged", incident_id, ts)
     return await get_incident(session, incident_id)
 
 
@@ -426,6 +530,7 @@ async def resolve(
     detail = {"note": note} if note else None
     await _record(session, incident_id, "resolved", actor, detail)
     await _audit(session, "incident.resolve", incident_id, actor, detail)
+    _deliver_domain_event(session, "incident_resolved", incident_id, None)
     return await get_incident(session, incident_id)
 
 

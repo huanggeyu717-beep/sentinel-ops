@@ -23,12 +23,17 @@ TEST_URL = os.environ.get(
 )
 os.environ["SENTINEL_DATABASE_URL"] = TEST_URL
 os.environ["SENTINEL_APPLY_DEV_SEED"] = "true"
+# 后台 tick 用墙上时钟, 会把用例里的假时间戳事件当成"很久以前"而乱触发;
+# 测试里把间隔调到 1 小时 (任务只会睡着等 cancel), tick 一律由用例显式注入。
+os.environ["SENTINEL_ENGINE_TICK_SECONDS"] = "3600"
 
 DSN = TEST_URL.replace("+asyncpg", "")
 TELEMETRY_TABLES = [
     "waterlevel_readings", "rfid_scans", "device_heartbeats", "sensorstate",
     # W2 事故生命周期: incident_events 引用 incidents, 同一条 TRUNCATE 一起清
     "incident_events", "incidents", "audit_log",
+    # W3 策略生命周期 (SPEC-006): 外键相互引用的表必须同一条 TRUNCATE 一起清
+    "policy_runs", "policy_publications", "approvals", "policy_versions", "policies",
 ]
 
 
@@ -127,7 +132,91 @@ def clean_telemetry(client):
 
     asyncio.run(go())
     client.cookies.clear()  # 上一个用例登录留下的会话不许外溢
+    # 策略引擎每个用例一个全新实例: 引擎状态/域事件队列/策略缓存互不外溢,
+    # 且 asyncio.Lock 不会把上一个用例的事件循环带过来 (见 reset_runtime docstring)
+    from app.services import policy_runtime
+
+    policy_runtime.reset_runtime()
     yield
+
+
+# 与 W2 硬编码行为等价的基线策略: 转湿即开事故。W3 引擎接管后, 依赖"湿了会开单"
+# 的既有用例 (test_incidents / test_auth / test_ingest) 显式声明使用这个夹具。
+# 直接 SQL 注入已发布状态 (含审批与发布记录, 满足全部约束), 不走 service ——
+# 生命周期本身的行为由 test_policy_service 覆盖。
+BASELINE_WET_OPEN_BODY = (
+    '{"scope": {"type": "zone", "ids": [1, 2, 3]},'
+    ' "trigger": {"type": "sensor_state_changed", "to": "WET"},'
+    ' "conditions": [],'
+    ' "actions": [{"type": "open_incident", "severity": "normal"}],'
+    ' "cooldown_s": 60}'
+)
+
+
+async def insert_published_policy(name: str, body: str) -> dict[str, int]:
+    """插入一条已发布策略 (policy + version + 已通过的审批 + 发布记录)。
+
+    审批链满足全部数据库约束: alex(user 3) 提交, chris(user 2) 批准并发布。
+    返回 {policy_id, version_id, approval_id, publication_id}。
+    """
+    conn = await asyncpg.connect(DSN)
+    try:
+        policy_id = await conn.fetchval(
+            "INSERT INTO policies (name, created_by) VALUES ($1, 3) RETURNING id", name
+        )
+        version_id = await conn.fetchval(
+            "INSERT INTO policy_versions (policy_id, version, body, status) "
+            "VALUES ($1, 1, $2::jsonb, 'published') RETURNING id",
+            policy_id, body,
+        )
+        approval_id = await conn.fetchval(
+            "INSERT INTO approvals (policy_version_id, requested_by, decided_by, "
+            "decision, decided_at) VALUES ($1, 3, 2, 'approved', now()) RETURNING id",
+            version_id,
+        )
+        publication_id = await conn.fetchval(
+            "INSERT INTO policy_publications (policy_id, policy_version_id, approval_id, "
+            "published_by) VALUES ($1, $2, $3, 2) RETURNING id",
+            policy_id, version_id, approval_id,
+        )
+    finally:
+        await conn.close()
+    return {
+        "policy_id": policy_id, "version_id": version_id,
+        "approval_id": approval_id, "publication_id": publication_id,
+    }
+
+
+@pytest.fixture
+def published_baseline(client, clean_telemetry):
+    """已发布的 wet->open 基线策略, 引擎据此接管开事故。"""
+    return asyncio.run(insert_published_policy("baseline-wet-open", BASELINE_WET_OPEN_BODY))
+
+
+@pytest.fixture
+def svc(client):
+    """直接调 service 层的运行器 (SPEC-006 验收 10-12 要求不经过 HTTP)。
+
+    每次调用在**独立事件循环 + 独立 NullPool 引擎**里跑: TestClient 的应用引擎
+    连接绑定在它自己的循环上, 跨循环复用连接池会炸; NullPool 用完即断, 不留
+    跨循环的连接。依赖 client 只是为了保证迁移与种子先跑完。
+    用法: svc(go), 其中 go 是 async def go(session_factory) -> Any。
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    def run(fn):
+        async def go():
+            engine = create_async_engine(TEST_URL, poolclass=NullPool)
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                return await fn(factory)
+            finally:
+                await engine.dispose()
+
+        return asyncio.run(go())
+
+    return run
 
 
 @pytest.fixture(autouse=True)

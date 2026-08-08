@@ -40,20 +40,23 @@ _TIMING_EQUALIZER_HASH = "$2b$12$a20TpkQebs6fmN93cBplOujCR3z38iHX95G.G.Aty58.plf
 PERM_READ = "read"                                      # /status/* 与 /incidents 只读
 PERM_INCIDENT_TRANSITION = "incidents:transition"       # assign / acknowledge / resolve
 PERM_CROSS_ZONE_ASSIGN = "incidents:cross_zone_assign"  # 跨区派单显式放行
-PERM_APPROVE_POLICY = "policies:approve"                # W3 审批发布, 此处先占位
+PERM_APPROVE_POLICY = "policies:approve"                # W3 审批/发布/撤销 (manager+)
+PERM_POLICY_DRAFT = "policies:draft"                    # W3 写草稿/校验/模拟/提交审批 (operator+)
 PERM_MANAGE_USERS = "users:manage"                      # 用户与角色管理
 PERM_TRIGGER_DRILL = "drills:trigger"                   # 触发演练 (SPEC-005 决策 6: operator+)
 
 _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "viewer": frozenset({PERM_READ}),
-    "operator": frozenset({PERM_READ, PERM_INCIDENT_TRANSITION, PERM_TRIGGER_DRILL}),
+    "operator": frozenset(
+        {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_TRIGGER_DRILL, PERM_POLICY_DRAFT}
+    ),
     "manager": frozenset(
         {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_CROSS_ZONE_ASSIGN,
-         PERM_APPROVE_POLICY, PERM_TRIGGER_DRILL}
+         PERM_APPROVE_POLICY, PERM_POLICY_DRAFT, PERM_TRIGGER_DRILL}
     ),
     "admin": frozenset(
         {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_CROSS_ZONE_ASSIGN,
-         PERM_APPROVE_POLICY, PERM_MANAGE_USERS, PERM_TRIGGER_DRILL}
+         PERM_APPROVE_POLICY, PERM_POLICY_DRAFT, PERM_MANAGE_USERS, PERM_TRIGGER_DRILL}
     ),
 }
 
