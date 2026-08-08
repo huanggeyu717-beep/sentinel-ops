@@ -1,0 +1,14 @@
+# 场景包: 自动关单 (SPEC-001 验收 7)
+# 覆盖: sensor_dry_for(dry_for_s=300) + close_incident 关单链路。
+# 时间轴: t=10s 变湿 (前置"变湿就开事故"策略开出事故 1) -> t=100s 转干 ->
+# 转干后第 300 秒 (t=400s) 恰满足 dry_for, 该时刻正是 tick (间隔 10s),
+# 产出 close_incident, subject.incident_id=1。
+# 场景最后一个事件在 t=100s, t=400s 的 tick 全靠回放的 tail_s (默认 600s) 续出来 ——
+# 这个场景同时验证 tail 机制: 没有这条尾巴, 关单永远走不到。
+name: auto_close
+description: Zone 1 单传感器漏水后转干, 稳定干燥 300 秒由策略自动关单
+events:
+  - {at_s: 0,   kind: heartbeat,    device_id: Arduino1, uptime_ms: 60000}
+  - {at_s: 10,  kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 812}
+  - {at_s: 60,  kind: heartbeat,    device_id: Arduino1, uptime_ms: 120000}
+  - {at_s: 100, kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 95}
