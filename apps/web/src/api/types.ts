@@ -102,3 +102,95 @@ export interface Me {
   roles: string[]
   employee: { id: number; name: string; zone_id: number | null } | null
 }
+
+// ===== W4 Automation Studio (SPEC-002 第三段) =====
+// 与 apps/api/app/routers/agent_tasks.py 的响应模型一一对应, 改这里之前先改后端。
+
+export interface AgentTaskCreated {
+  ok: boolean
+  task_id: number
+  created: boolean // false = 撞上还没走完的同一句话, 拿回那一条 (不是错误)
+  status: string
+  stage: string | null
+  // running 但打卡已停 (服务可能刚崩溃过): 界面标"疑似中断", 不说"重复提交"
+  suspected_interrupted: boolean
+}
+
+export type TimelineKind =
+  | 'transition'
+  | 'step'
+  | 'clarification_question'
+  | 'clarification_answer'
+
+export interface TimelineItem {
+  seq: number
+  kind: TimelineKind
+  label: string // step: 工具名; transition: 'stage_transition'; 澄清: 问题/回答原文
+  detail: Record<string, unknown> | null
+  arguments: Record<string, unknown> | null // transition 的去向在 arguments.to
+  latency_ms: number | null
+  retry_count: number | null
+  input_tokens: number | null
+  output_tokens: number | null
+}
+
+export interface AgentTaskInfo {
+  id: number
+  user_id: number
+  status: string
+  stage: string
+  error_code: string | null
+  error_detail: string | null
+  input_text: string
+  target_policy_id: number | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface AgentTaskListItem {
+  id: number
+  status: string
+  stage: string
+  error_code: string | null
+  input_preview: string // 服务端截断到 80 字, 整段原文在单条接口里
+  input_truncated: boolean
+  requested_by: string
+  policy_name: string | null
+  created_at: string
+  completed_at: string | null
+}
+
+export interface AgentTaskSnapshot {
+  ok: boolean
+  task: AgentTaskInfo
+  timeline: TimelineItem[]
+}
+
+export interface TaskStatusEvent {
+  status: string
+  stage: string
+  error_code: string | null
+  error_detail: string | null
+}
+
+export interface PolicyListItem {
+  id: number
+  name: string
+  created_by: number | null
+  created_at: string
+  publication_id: number | null
+  active_version_id: number | null
+  active_version: number | null
+  latest_version: number | null
+}
+
+export interface PolicyVersionDetail {
+  ok: boolean
+  id: number
+  policy_id: number
+  version: number
+  name: string
+  status: string
+  created_at: string
+  body: Record<string, unknown>
+}

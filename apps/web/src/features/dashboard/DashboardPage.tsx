@@ -2,7 +2,7 @@
 // 传感器/设备/事故 5 秒轮询, 演练进度 2 秒 (决策 1, 轮询定义在 api/queries.ts)。
 import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import { post } from '../../api/client'
 import { useDevices, useSensors } from '../../api/queries'
@@ -91,6 +91,9 @@ function TopBar({ me }: { me: Me }) {
         <span className="who small">
           <strong>{me.user.display_name ?? me.user.email}</strong> · {me.roles.join(', ') || '无角色'}
         </span>
+        <Link className="btn-ghost btn-sm" to="/studio">
+          Automation Studio
+        </Link>
         <button className="btn-ghost btn-sm" onClick={cycleTheme}>
           {THEME_LABEL[theme]}
         </button>
