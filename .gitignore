@@ -4,6 +4,10 @@ __pycache__/
 node_modules/
 dist/
 .env
+# LLM 录制分两个目录 (SPEC-002 第九节):
+# - .llm-cache/ 是开发时随手产生的录制 (SENTINEL_LLM_RECORD_REPLAY_DIR 默认值), 不进版本库;
+# - apps/api/tests/cassettes/ 是测试与 W5 评测依赖的录制, **进版本库** ——
+#   否则换台机器、CI 上"离线复跑"那条验收根本跑不了。
 .llm-cache/
 pgdata/
 .DS_Store

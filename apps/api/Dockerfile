@@ -19,6 +19,11 @@ RUN pip install ./packages/policy_engine
 COPY packages/scenario ./packages/scenario
 RUN pip install ./packages/scenario
 COPY scenarios ./scenarios
+# W4 Agent 的 simulate_policy 默认数据源 history_csv 指向这份真实读数
+# (agent_tools._HISTORY_CSV 的仓库相对路径)。不 COPY 它, 容器里每条 Agent 任务
+# 都会在 simulating 一步落 dead_letter (SourceNotFound) —— 第三段端到端实测
+# 踩到: 宿主机测试都从仓库根跑, 这条路径只有容器里才会断。
+COPY apps/device-sim/seed ./apps/device-sim/seed
 
 COPY apps/api/app ./app
 # 迁移相关: alembic.ini + 版本脚本 + W1 那两份被基线引用的 .sql 原文。

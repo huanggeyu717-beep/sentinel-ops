@@ -158,7 +158,9 @@ def test_migration_0007__downgrade_then_upgrade_roundtrip(client):
     policy_id, version_id = db(seed)
 
     cfg = alembic_config()
-    command.downgrade(cfg, "-1")
+    # 显式降到 0007 的上一版, 不用相对的 "-1" —— 那只在 0007 自己是 head 时成立,
+    # 0008 落地后 "-1" 降的是别人 (W4 第一段发现并修正)
+    command.downgrade(cfg, "0006_positions")
 
     async def check_downgraded(conn):
         assert not await conn.fetchval(

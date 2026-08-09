@@ -19,13 +19,19 @@ sys.path.insert(0, str(APP_DIR))
 
 TEST_URL = os.environ.get(
     "SENTINEL_TEST_DATABASE_URL",
-    "postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test",
+    # 5433 不是默认端口: 本机 Homebrew postgresql@17 占着 5432, 项目的 Docker
+    # Postgres 让路映射到 5433 (docker-compose.yml)。CI 里这个默认值不生效 ——
+    # workflow 显式传 SENTINEL_TEST_DATABASE_URL (那边的 Postgres 独立起, 是 5432)。
+    "postgresql+asyncpg://sentinel:sentinel@localhost:5433/sentinel_test",
 )
 os.environ["SENTINEL_DATABASE_URL"] = TEST_URL
 os.environ["SENTINEL_APPLY_DEV_SEED"] = "true"
 # 后台 tick 用墙上时钟, 会把用例里的假时间戳事件当成"很久以前"而乱触发;
 # 测试里把间隔调到 1 小时 (任务只会睡着等 cancel), tick 一律由用例显式注入。
 os.environ["SENTINEL_ENGINE_TICK_SECONDS"] = "3600"
+# W4 agent 打卡/清扫循环同理: 5 秒一轮的清扫事务 (先锁 agent_tasks 再读
+# agent_clarifications) 会与夹具的反向 TRUNCATE 偶发死锁; 打卡与清扫一律由用例显式调。
+os.environ["SENTINEL_AGENT_HEARTBEAT_SECONDS"] = "3600"
 
 DSN = TEST_URL.replace("+asyncpg", "")
 TELEMETRY_TABLES = [
@@ -92,8 +98,13 @@ def auth_headers(client):
 
 @pytest.fixture(scope="session")
 def viewer_headers(client, auth_headers):
-    """入库一个 viewer 账号并返回其 Bearer 头 (种子只有另外三种角色)。
+    """返回一个 viewer 账号的 Bearer 头。
 
+    迁移 0007 起种子里已经有这个 viewer@example.com 账号 (连同 dana,
+    SPEC-006 第三节), 下面的 ON CONFLICT DO NOTHING 实际什么都不再插 ——
+    保留只是兜底 0007 之前的旧库。不要再把这里当成"种子无 viewer"的依据
+    (第二段的 CANONICAL_INVENTORY 就是被旧 docstring "种子只有另外三种角色"
+    误导错的)。
     放 conftest 是因为 test_auth 与 test_drills 都要用它测 403。
     """
     from app.services import auth_service

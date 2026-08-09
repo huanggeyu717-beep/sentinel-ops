@@ -16,8 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import apply_dev_seed, run_migrations
-from .routers import auth, drills, employees, incidents, ingest, policies, status
-from .services import auth_service, policy_runtime
+from .routers import agent_tasks, auth, drills, employees, incidents, ingest, policies, status
+from .services import agent_runtime, auth_service, policy_runtime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("sentinel")
@@ -36,13 +36,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # W3: 策略引擎 tick 后台任务 (SPEC-006 第四节)。多实例会重复 tick 的边界
     # 与关停语义见 policy_runtime.tick_loop 的 docstring。
     tick_task = asyncio.create_task(policy_runtime.tick_loop(), name="engine-tick")
+    # W4: Agent 打卡与清扫 (SPEC-002 第二节)。**一个任务两件事**, 不另开;
+    # 边界与关停语义见 agent_runtime.maintenance_loop 的 docstring。
+    agent_task = asyncio.create_task(
+        agent_runtime.maintenance_loop(), name="agent-maintenance"
+    )
     try:
         yield
     finally:
-        # 干净取消: 不 cancel 会让测试与 uvicorn 关停时挂在这个永续任务上
-        tick_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await tick_task
+        # 干净取消: 不 cancel 会让测试与 uvicorn 关停时挂在这些任务上。
+        # W4 第三段: 连同 HTTP 层 spawn 的 Agent 后台任务一起取消 —— 被取消的
+        # 任务轮事务回滚、行停在 running, 下次启动后由租约清扫收成 dead_letter
+        # (SPEC-002 第一节的重启边界, 不在关停时抢救)。
+        for task in (tick_task, agent_task, *agent_runtime.background_tasks()):
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 app = FastAPI(title="Sentinel API", version="0.1.0", lifespan=lifespan)
@@ -60,7 +69,7 @@ app.include_router(incidents.router)
 app.include_router(drills.router)
 app.include_router(policies.router)
 app.include_router(employees.router)
-# W4: agent_tasks(+SSE)
+app.include_router(agent_tasks.router)  # W4: Agent 任务 + SSE (SPEC-002 第一节)
 
 
 @app.get("/health")

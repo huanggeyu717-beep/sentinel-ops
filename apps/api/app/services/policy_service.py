@@ -42,7 +42,7 @@ from policy_engine import Inventory, LoadedPolicy, Policy, ReplayReport, replay,
 
 from ..config import settings
 from ..db import session_factory
-from . import drill_service, policy_runtime
+from . import agent_service, drill_service, policy_runtime
 from .auth_service import PERM_APPROVE_POLICY, AuthUser, has_permission
 
 # ===== 异常 (路由层在 W4 映射成 HTTP 状态码) =====
@@ -123,11 +123,11 @@ _INSERT_POLICY = text("""
 """)
 
 _INSERT_VERSION = text("""
-    INSERT INTO policy_versions (policy_id, version, body, status)
+    INSERT INTO policy_versions (policy_id, version, body, status, created_by, source)
     VALUES (:policy_id,
             (SELECT COALESCE(max(version), 0) + 1 FROM policy_versions
              WHERE policy_id = :policy_id),
-            CAST(:body AS jsonb), 'draft')
+            CAST(:body AS jsonb), 'draft', :created_by, :source)
     RETURNING id, version
 """)
 
@@ -167,12 +167,12 @@ _ACTIVE_PUBLICATION = text("""
 
 _INSERT_APPROVAL = text("""
     INSERT INTO approvals (task_id, policy_version_id, requested_by)
-    VALUES (NULL, :policy_version_id, :requested_by)
+    VALUES (:task_id, :policy_version_id, :requested_by)
     RETURNING id
 """)
 
 _GET_APPROVAL = text("""
-    SELECT id, policy_version_id, requested_by, decided_by, decision, note
+    SELECT id, task_id, policy_version_id, requested_by, decided_by, decision, note
     FROM approvals WHERE id = :id
 """)
 
@@ -294,9 +294,15 @@ def _parse_body(body: dict[str, Any]) -> Policy:
 
 
 async def create_policy(
-    session: AsyncSession, name: str, body: dict[str, Any], created_by: int
+    session: AsyncSession, name: str, body: dict[str, Any], created_by: int,
+    source: str = "human",
 ) -> dict[str, Any]:
-    """新建策略 + 第一版草稿。"""
+    """新建策略 + 第一版草稿。
+
+    created_by 记发起的人 (Agent 不是另一个作者, 是这个人手里的工具, 没有
+    "agent 系统账号"); source 记 human/agent —— W5 评测要把"经 Agent 编译的草案"
+    从"直接提交 DSL 的草案"里挑出来 (SPEC-002 定稿决定 1)。
+    """
     _parse_body(body)
     policy_id: int = (
         await session.execute(_INSERT_POLICY, {"name": name, "created_by": created_by})
@@ -304,7 +310,8 @@ async def create_policy(
     version = (
         await session.execute(
             _INSERT_VERSION,
-            {"policy_id": policy_id, "body": json.dumps(body, ensure_ascii=False)},
+            {"policy_id": policy_id, "body": json.dumps(body, ensure_ascii=False),
+             "created_by": created_by, "source": source},
         )
     ).mappings().one()
     await _audit(session, "policy.create", "policy", policy_id, created_by, {"name": name})
@@ -312,7 +319,8 @@ async def create_policy(
 
 
 async def add_version(
-    session: AsyncSession, policy_id: int, body: dict[str, Any], created_by: int
+    session: AsyncSession, policy_id: int, body: dict[str, Any], created_by: int,
+    source: str = "human",
 ) -> dict[str, Any]:
     """新增草稿版本。改草稿即新建一版, 已有版本永不原地修改。"""
     _parse_body(body)
@@ -323,12 +331,66 @@ async def add_version(
     version = (
         await session.execute(
             _INSERT_VERSION,
-            {"policy_id": policy_id, "body": json.dumps(body, ensure_ascii=False)},
+            {"policy_id": policy_id, "body": json.dumps(body, ensure_ascii=False),
+             "created_by": created_by, "source": source},
         )
     ).mappings().one()
     await _audit(session, "policy.add_version", "policy", policy_id, created_by,
                  {"version": version["version"]})
     return {"policy_id": policy_id, "version_id": version["id"], "version": version["version"]}
+
+
+_UPDATE_DRAFT = text("""
+    UPDATE policy_versions SET body = CAST(:body AS jsonb)
+    WHERE id = :id AND status = 'draft'
+    RETURNING id
+""")
+
+# 只允许提交审批之前的状态转 discarded: "版本不可变"的边界是提交审批那一刻
+# (SPEC-006 第二节 W4 补充), awaiting_approval 起永不改动。
+_DISCARD = text("""
+    UPDATE policy_versions SET status = 'discarded'
+    WHERE id = :id AND status IN ('draft', 'validated', 'simulated')
+    RETURNING id
+""")
+
+
+async def update_draft_body(
+    session: AsyncSession, version_id: int, body: dict[str, Any], actor_user_id: int
+) -> dict[str, Any]:
+    """就地改草稿 body (Agent 修复循环用, SPEC-002 第六节)。
+
+    只对 status='draft' 的行生效 —— draft 是工作台, 提交审批即冻结。条件更新
+    0 行即 409, 与本模块其余推进同一口径。改之前的 body 由调用方 (agent_tools)
+    先读出来记进 agent_steps, 中间态一条不丢。
+    """
+    _parse_body(body)
+    row = (await session.execute(_GET_VERSION, {"id": version_id})).mappings().one_or_none()
+    if row is None:
+        raise PolicyVersionNotFound
+    updated = (
+        await session.execute(
+            _UPDATE_DRAFT,
+            {"id": version_id, "body": json.dumps(body, ensure_ascii=False)},
+        )
+    ).scalar_one_or_none()
+    if updated is None:
+        raise TransitionConflict(row["status"])
+    await _audit(session, "policy.update_draft", "policy_version", version_id,
+                 actor_user_id, {"policy_id": row["policy_id"]})
+    return {"version_id": version_id, "previous_body": _body_dict(row["body"])}
+
+
+async def discard_version(session: AsyncSession, version_id: int) -> bool:
+    """失败任务的草稿标 discarded (不删 —— 失败的草案是 W5 信息量最大的样本)。
+
+    幂等返回 bool: 已是 discarded、或已进入 awaiting_approval 之后的不可变区,
+    都返回 False 不改动。清扫循环与失败路径可能先后各调一次, 不能抛 409。
+    """
+    discarded = (
+        await session.execute(_DISCARD, {"id": version_id})
+    ).scalar_one_or_none()
+    return discarded is not None
 
 
 async def _advance_status(
@@ -476,19 +538,21 @@ async def simulate_version(
 
 
 async def request_approval(
-    session: AsyncSession, version_id: int, requested_by: int
+    session: AsyncSession, version_id: int, requested_by: int, task_id: int | None = None
 ) -> dict[str, Any]:
     """提交审批: simulated -> awaiting_approval, approvals 出现一条 decision IS NULL。
-    task_id 留空 —— W3 的策略由人直接写, W4 Agent 产出的草稿才会填。"""
+    task_id: 人直接写的策略留空; W4 Agent 产出的草稿填它的 agent_tasks.id ——
+    approvals.task_id 这一列 0001 就是为此留的, 这里补上入口 (SPEC-006 第三节)。"""
     await _advance_status(session, version_id, "simulated", "awaiting_approval")
     approval_id: int = (
         await session.execute(
             _INSERT_APPROVAL,
-            {"policy_version_id": version_id, "requested_by": requested_by},
+            {"task_id": task_id, "policy_version_id": version_id,
+             "requested_by": requested_by},
         )
     ).scalar_one()
     await _audit(session, "policy.request_approval", "approval", approval_id, requested_by,
-                 {"policy_version_id": version_id})
+                 {"policy_version_id": version_id, "task_id": task_id})
     return {"approval_id": approval_id, "policy_version_id": version_id}
 
 
@@ -536,6 +600,11 @@ async def decide_approval(
     await _advance_status(session, row["policy_version_id"], "awaiting_approval", new_status)
     await _audit(session, "approval.decide", "approval", approval_id, decider.id,
                  {"decision": decision, "policy_version_id": row["policy_version_id"]})
+    if row["task_id"] is not None:
+        # 这条审批挂着 Agent 任务: 把任务推进到 completed (SPEC-002 第四节)。
+        # **批准和否决都推进** —— 批没批通过与 Agent 无关, 它的活在提交审批那一刻
+        # 就干完了。条件更新在 agent_service 里, 任务已死信时静默不动。
+        await agent_service.complete_task(session, row["task_id"], decision)
     return {
         "approval_id": approval_id,
         "decision": decision,

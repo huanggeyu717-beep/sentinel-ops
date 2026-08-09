@@ -11,7 +11,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-sentinel}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sentinel}
       POSTGRES_DB: ${POSTGRES_DB:-sentinel}
-    ports: ["5432:5432"]
+    # 宿主机侧刻意用 5433 而不是默认 5432: 本机 Homebrew postgresql@17 占着
+    # loopback 5432 (另一个项目在用, 有数据, 不动它), 由本项目让路。
+    # 容器内部仍是 5432, 改的只是对宿主机暴露的这一侧; CI 的 Postgres 独立起, 不受影响。
+    ports: ["5433:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
