@@ -38,8 +38,8 @@ test-api:       ## 只跑 API 测试 (需要本地 Postgres)
 lint:           ## 静态检查 ruff + mypy (与 CI 同一份脚本)
 	bash scripts/ci/lint.sh
 
-lint-fix:       ## 自动修可修的 lint 问题
-	ruff check --fix packages apps/api apps/device-sim evals
+lint-fix:       ## 自动修可修的 lint 问题 (目标清单与 lint / CI 同一份)
+	bash scripts/ci/lint.sh --fix
 
 lint-version:   ## 确认本机 ruff 版本与 requirements-dev.txt 锁定的一致 (见 ADR-005)
 	@bash scripts/ci/check-tool-versions.sh

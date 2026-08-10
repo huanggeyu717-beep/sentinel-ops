@@ -19,5 +19,9 @@ ci_pip_install -e packages/scenario
 # 纯函数, 它们的测试留在 evals/tests/。按实际 import 判, 不按文件名猜。
 # 这条约定由 evals/tests/test_grader_io_boundary.py 的传递 import 断言守着,
 # 不靠人记得 —— 光靠"下次注意"守不住, 本项目在这上面栽过三次。
-section "pytest packages/policy_engine packages/scenario apps/device-sim evals/tests"
-pytest packages/policy_engine packages/scenario apps/device-sim evals/tests -q
+#
+# `packages` 按目录收而不是逐个点名 (W5 收尾改, 与 lib.sh 的 LINT_TARGETS 同一条
+# 理由): 原来写 `packages/policy_engine packages/scenario`, 出现第三个包时它的
+# 测试会静默地永远不执行 —— 正是本注释开头那句话警告的坑, 换了个位置又长了一次。
+section "pytest packages apps/device-sim evals/tests"
+pytest packages apps/device-sim evals/tests -q

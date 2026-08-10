@@ -54,6 +54,12 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: bash scripts/ci/test-api.sh
+      # eval 回归冒烟 (replay, 零 token 成本) + 注入得逞率 0 的硬门槛。
+      # SPEC-007 第五节与验收 5 早就定义了它, 但在 W5 收尾之前它只是 ci.yml 里
+      # 的一行注释 —— 声明的和执行的不是一回事, 与本轮修的那条躺了四天的检查同形。
+      # 挂在 api job 是因为 runner 走 HTTP: 要真 Postgres、要 httpx/asyncpg,
+      # engine job 三样都没有而且故意没有 (见脚本头部注释)。
+      - run: bash scripts/ci/test-eval-smoke.sh
 
   docker:
     name: 镜像可构建 (面试官一键复现的前提)
@@ -69,8 +75,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: npm ci || npm install
+      # 原来写的是 `npm ci || npm install` —— lock 与 package.json 不一致时
+      # npm ci 失败后**静默回退**, 锁文件漂移永远不会红, 等于没锁 (W5 收尾去掉)。
+      # 去掉之前实测过: 拿 package.json + package-lock.json 到空目录裸跑 npm ci,
+      # 退出码 0, 96 个包 —— 锁文件是同步的, 这一个字符去得起。
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run build
 
-  # W5+: eval 回归 (record-replay, 零 token 成本), prompt_injection 拦截率 100% 为红线

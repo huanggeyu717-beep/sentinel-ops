@@ -50,6 +50,15 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def load_case_ids(path: Path) -> set[str]:
+    """冒烟子集清单 (evals/cassettes/smoke/cases.json) 里的 case_ids。"""
+    manifest = json.loads(path.read_text())
+    ids = manifest.get("case_ids") or []
+    if not ids:
+        raise SystemExit(f"{path} 里 case_ids 是空的 —— 空集上跑什么都会绿")
+    return {str(i) for i in ids}
+
+
 def verify_inventory(eval_db_url: str) -> None:
     """reset 之后跑那条既有的连库一致性测试 (SPEC-007 第七节): 它顺带经 TestClient
     的启动流程把迁移与 dev seed 跑到评测库上 —— 同一条建表路径, 不另写一条。"""
@@ -315,6 +324,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="录制目录; replay 模式必填 (指向要复跑的那份轨迹)")
     parser.add_argument("--reset-db", action="store_true",
                         help="只重置评测库并校验 inventory, 不跑任何臂")
+    parser.add_argument("--cases-file", type=Path, default=None,
+                        help="只跑清单里的用例 (CI 冒烟子集用); "
+                             "文件是 {run_id, dataset_version, case_ids[]}")
     args = parser.parse_args(argv)
 
     cfg = app_settings()
@@ -331,8 +343,23 @@ def main(argv: list[str] | None = None) -> int:
     arm = ARMS[args.arm]
 
     all_cases = load_cases(args.dataset)
-    cases = sample_c2(all_cases) if arm.sample == "c2" else all_cases
-    sampled_ids = [str(c["id"]) for c in cases] if arm.sample == "c2" else None
+    if args.cases_file is not None:
+        wanted = load_case_ids(args.cases_file)
+        known = {str(c["id"]) for c in all_cases}
+        missing = sorted(wanted - known)
+        if missing:
+            # 清单指向数据集里已经不存在的 id 时**当场报错**, 不许静默少跑几条 ——
+            # 少跑几条的冒烟照样是绿的, 而它守的东西已经没了 (与"回放 miss 不许
+            # 静默跳过"同一条, SPEC-007 第五节)。
+            parser.error(f"--cases-file 里有数据集中不存在的 id: {missing}")
+        cases = [c for c in all_cases if str(c["id"]) in wanted]
+        sampled_ids = [str(c["id"]) for c in cases]
+    elif arm.sample == "c2":
+        cases = sample_c2(all_cases)
+        sampled_ids = [str(c["id"]) for c in cases]
+    else:
+        cases = all_cases
+        sampled_ids = None
 
     estimate = print_dry_run(arm, cases, mode=args.mode,
                              max_cost=args.max_cost_cny)
