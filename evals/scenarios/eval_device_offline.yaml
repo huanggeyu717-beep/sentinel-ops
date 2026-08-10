@@ -1,0 +1,54 @@
+# 评测专用场景 (evals/scenarios/, 不进产品的 scenarios/ —— SPEC-007 第七节:
+# 演练面板与 simulate_policy 的枚举都不该看见它)。
+#
+# 为哪条用例而建: simple-002 "采集板掉线超过十分钟邮件提醒 admin, 一小时内不重复"
+# (reference: device_offline offline_for_s=600 + notify admin, cooldown 3600)。
+# 现有三个产品场景的时间轴都够不到离线判定 (basic_spill 最后事件 t=75, 差 5 秒),
+# 这条用例在它们上面是空产出, 会被验收 6b 拦下。
+#
+# 判别维度是怎么搭的 (三段掉线, 相位与间隔都是挑过的):
+# - Arduino2 最后心跳 t=300 -> 掉线时刻 900 (正好落在 tick 上): offline_for_s +1
+#   的变异体要等到 t=910 的 tick 才触发, 与 reference (t=900) 可分;
+# - 第二段最后心跳 t=2401 -> reference 掉线时刻 3001 (tick 3010), offline_for_s -1
+#   的变异体掉线时刻 3000 (tick 3000), 相位错开一格, 可分;
+#   同时 3001-900=2101 秒的间隔落在 (1800, 3600) 里: reference 的 cooldown 3600
+#   吞掉这一次, cooldown/2=1800 的变异体会产出 —— 冷却减半可分;
+# - 第三段最后心跳 t=4401 -> 掉线时刻 5001 (tick 5010), 距上次产出 (t=900) 4110 秒,
+#   落在 (3600, 7200) 里: reference 产出, cooldown x2=7200 的变异体吞掉 —— 冷却
+#   翻倍可分。
+# - Arduino1 每 300 秒规律心跳到 t=5400, 只为把时间轴撑长, 自己永不掉线。
+#
+# reference 预期产出: notify @ t=900 与 t=5010, 共 2 次。
+name: eval_device_offline
+description: 评测用 —— Arduino2 三段掉线 (相位/间隔为 offline_for 与 cooldown 变异体设计), Arduino1 全程在线撑时间轴
+events:
+  - {at_s: 0,    kind: heartbeat, device_id: Arduino1, uptime_ms: 0}
+  - {at_s: 0,    kind: heartbeat, device_id: Arduino2, uptime_ms: 0}
+  - {at_s: 60,   kind: heartbeat, device_id: Arduino2, uptime_ms: 60000}
+  - {at_s: 120,  kind: heartbeat, device_id: Arduino2, uptime_ms: 120000}
+  - {at_s: 180,  kind: heartbeat, device_id: Arduino2, uptime_ms: 180000}
+  - {at_s: 240,  kind: heartbeat, device_id: Arduino2, uptime_ms: 240000}
+  - {at_s: 300,  kind: heartbeat, device_id: Arduino2, uptime_ms: 300000}
+  - {at_s: 300,  kind: heartbeat, device_id: Arduino1, uptime_ms: 300000}
+  - {at_s: 600,  kind: heartbeat, device_id: Arduino1, uptime_ms: 600000}
+  - {at_s: 900,  kind: heartbeat, device_id: Arduino1, uptime_ms: 900000}
+  - {at_s: 1200, kind: heartbeat, device_id: Arduino1, uptime_ms: 1200000}
+  - {at_s: 1500, kind: heartbeat, device_id: Arduino1, uptime_ms: 1500000}
+  - {at_s: 1800, kind: heartbeat, device_id: Arduino1, uptime_ms: 1800000}
+  - {at_s: 2100, kind: heartbeat, device_id: Arduino1, uptime_ms: 2100000}
+  # Arduino2 短暂回线, 最后一条消息刻意停在 2401 (相位 +1, 见头注)
+  - {at_s: 2400, kind: heartbeat, device_id: Arduino2, uptime_ms: 2400000}
+  - {at_s: 2401, kind: heartbeat, device_id: Arduino2, uptime_ms: 2401000}
+  - {at_s: 2700, kind: heartbeat, device_id: Arduino1, uptime_ms: 2700000}
+  - {at_s: 3000, kind: heartbeat, device_id: Arduino1, uptime_ms: 3000000}
+  - {at_s: 3300, kind: heartbeat, device_id: Arduino1, uptime_ms: 3300000}
+  - {at_s: 3600, kind: heartbeat, device_id: Arduino1, uptime_ms: 3600000}
+  - {at_s: 3900, kind: heartbeat, device_id: Arduino1, uptime_ms: 3900000}
+  - {at_s: 4200, kind: heartbeat, device_id: Arduino1, uptime_ms: 4200000}
+  # Arduino2 再次回线又消失, 最后一条同样停在相位 +1
+  - {at_s: 4400, kind: heartbeat, device_id: Arduino2, uptime_ms: 4400000}
+  - {at_s: 4401, kind: heartbeat, device_id: Arduino2, uptime_ms: 4401000}
+  - {at_s: 4500, kind: heartbeat, device_id: Arduino1, uptime_ms: 4500000}
+  - {at_s: 4800, kind: heartbeat, device_id: Arduino1, uptime_ms: 4800000}
+  - {at_s: 5100, kind: heartbeat, device_id: Arduino1, uptime_ms: 5100000}
+  - {at_s: 5400, kind: heartbeat, device_id: Arduino1, uptime_ms: 5400000}

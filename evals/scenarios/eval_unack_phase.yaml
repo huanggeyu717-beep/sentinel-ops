@@ -1,0 +1,42 @@
+# 评测专用场景: 无人接单相位 (sensor_state_changed + incident_unacknowledged 类)。
+#
+# 为哪些用例: c-010 / a-012 这类"又湿一次而且老单子没人理就升级"。条件里的
+# duration_s 是事件驱动求值 (在触发事件那一刻比事故年龄), 判别 ±1 需要
+# **年龄恰好落在阈值两侧半秒**的触发事件, 任何自然场景都不会有 —— 只能造。
+#
+# 用例必须配开单陪跑 (sensor 级, 变湿即开)、**不配关单陪跑**: 事故要一直
+# 挂着没人理, 后续重湿才能踩在它的年龄上。
+#
+# 相位设计 (duration=120 的策略, 事故年龄 = 触发时刻 - 开单时刻):
+# - s1 开单 @9.5, 重湿 @130: 年龄 120.5 -> ref(120) 产出, +1(121) 不产出;
+# - s2 开单 @10,  重湿 @129.5: 年龄 119.5 -> ref 不产出, -1(119) 产出;
+# - s1 再重湿 @205 (年龄 195.5, 距上次产出 75s ∈ (60,120]) 与 @330
+#   (年龄 320.5, 距 285 产出 45s ∈ (30,60]): cooldown 60 的 x2 与 /2 判别带;
+# - s1 @285: 年龄 275.5 ∈ (240, ...): duration x2=240 在此仍产出, 但它在
+#   @130/@205 (年龄 <240) 不产出 -> x2 可分;
+# - s2 @700: 年龄 690, 谁都产出 —— 但 zone[1] 的 reference 挂在 s2 的事故上,
+#   scope.type:zone->sensor[1] 的变异体错过它 (可分);
+# - s4 (z2) 开单 @500, 重湿 @640 (年龄 140): scope.ids:+2 与 ->global 可分。
+name: eval_unack_phase
+description: 评测用 —— 重湿事件踩在无人接单事故的年龄阈值两侧, 服务 incident_unacknowledged 相位与冷却变异体
+events:
+  - {at_s: 9.5,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 850}
+  - {at_s: 10,    kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 852}
+  - {at_s: 50,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 80}
+  - {at_s: 60,    kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 81}
+  - {at_s: 129.5, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 854}
+  - {at_s: 130,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 853}
+  - {at_s: 160,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 79}
+  - {at_s: 170,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 78}
+  - {at_s: 205,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 855}
+  - {at_s: 250,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 77}
+  - {at_s: 285,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 856}
+  - {at_s: 310,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 76}
+  - {at_s: 330,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 857}
+  - {at_s: 400,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 75}
+  - {at_s: 500,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 860}
+  - {at_s: 560,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 74}
+  - {at_s: 640,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 861}
+  - {at_s: 660,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 73}
+  - {at_s: 700,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 858}
+  - {at_s: 760,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 72}

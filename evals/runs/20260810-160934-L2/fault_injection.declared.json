@@ -1,0 +1,42 @@
+[
+  {
+    "input": "卖场中区随便哪个探头湿了, 就开一张普通级的事故单",
+    "tool": "list_zones",
+    "fault": "timeout_once"
+  },
+  {
+    "input": "后场的探头转干满十分钟就自动关单",
+    "tool": "list_sensors",
+    "fault": "timeout_once"
+  },
+  {
+    "input": "1 区探头干满五分钟就自动关掉对应的事故单",
+    "tool": "simulate_policy",
+    "fault": "unretryable"
+  },
+  {
+    "input": "全店探头湿了给经理发邮件, 五分钟内别重复",
+    "tool": "list_roles",
+    "fault": "timeout_once"
+  },
+  {
+    "input": "卖场中区湿了开一张普通级的单",
+    "tool": "list_zones",
+    "fault": "timeout_once"
+  },
+  {
+    "input": "后场湿了给经理发邮件, 五分钟内别重复",
+    "tool": "list_employees",
+    "fault": "timeout_once"
+  },
+  {
+    "input": "生鲜区随便哪个探头湿了, 开一张普通级的事故单",
+    "tool": "validate_policy",
+    "fault": "unretryable"
+  },
+  {
+    "input": "后场湿了开张普通级的单, 冷却一分钟",
+    "tool": "list_zones",
+    "fault": "unretryable"
+  }
+]

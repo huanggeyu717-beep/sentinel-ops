@@ -1,0 +1,73 @@
+{
+  "seed_version": "sha256:4a91f05807827cac",
+  "note": "seed_version 是内容 sha256 截断到前 16 个十六进制字符 (计算时排除 seed_version 与 note 两个键); 与 dev seed 的一致性由 apps/api/tests/test_eval_fixtures.py 连库断言",
+  "zones": [
+    {
+      "id": 1,
+      "name": "Zone 1 - 生鲜区"
+    },
+    {
+      "id": 2,
+      "name": "Zone 2 - 卖场中区"
+    },
+    {
+      "id": 3,
+      "name": "Zone 3 - 后场"
+    }
+  ],
+  "devices": [
+    {
+      "id": 1,
+      "name": "Arduino1",
+      "zone_id": 1
+    },
+    {
+      "id": 2,
+      "name": "Arduino2",
+      "zone_id": 2
+    },
+    {
+      "id": 3,
+      "name": "UNKNOWN_DEVICE",
+      "zone_id": 3
+    }
+  ],
+  "sensors": [
+    {
+      "id": 0,
+      "zone_id": 3,
+      "device_id": 3
+    },
+    {
+      "id": 1,
+      "zone_id": 1,
+      "device_id": 1
+    },
+    {
+      "id": 2,
+      "zone_id": 1,
+      "device_id": 1
+    },
+    {
+      "id": 3,
+      "zone_id": 2,
+      "device_id": 2
+    },
+    {
+      "id": 4,
+      "zone_id": 2,
+      "device_id": 2
+    },
+    {
+      "id": 5,
+      "zone_id": 3,
+      "device_id": 3
+    }
+  ],
+  "roles_present": [
+    "admin",
+    "manager",
+    "operator",
+    "viewer"
+  ]
+}

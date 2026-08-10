@@ -1,0 +1,26 @@
+{
+  "run_id": "20260810-155429-L0",
+  "arm": "L0",
+  "ablation_level": "A0",
+  "archived_dataset_version": "v1.1",
+  "archived_dataset_sha": "681d95ec3325eca5",
+  "v1_1_sha": "681d95ec3325eca5",
+  "v1_2_sha": "e866faf135c0cccf",
+  "strip_roundtrip_ok": true,
+  "clarify_answer_read_point": "evals/runner/client.drive_case (status == 'clarifying')",
+  "ablation_profiles": {
+    "A0": {
+      "clarification": false,
+      "validate_and_repair": false
+    },
+    "A1": {
+      "clarification": false,
+      "validate_and_repair": false
+    }
+  },
+  "rows_final_status_clarifying": [],
+  "rows_with_clarify_rounds": [],
+  "regrade_diff_case_ids": [],
+  "regrade_vs_archive_drift_case_ids": [],
+  "conclusion": "本 run 的归档在数据集 v1.2 下同样成立 (逐条判分相同), 未重跑"
+}

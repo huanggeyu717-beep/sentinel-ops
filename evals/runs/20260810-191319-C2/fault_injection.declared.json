@@ -1,0 +1,7 @@
+[
+  {
+    "input": "卖场中区随便哪个探头湿了, 就开一张普通级的事故单",
+    "tool": "list_zones",
+    "fault": "timeout_once"
+  }
+]

@@ -1,0 +1,130 @@
+# 评测专用场景: 湿事件梯子 (sensor_state_changed 类策略的通用判别场景)。
+#
+# 为什么存在: 第一轮准入 8/14 条被打回, 打回原因高度集中 —— cooldown x2//2 与
+# window_s ±1/x2 的变异体需要场景里有**落在特定区间的重复触发间隔**, 三个产品
+# 场景与 CSV 都凑不齐。与其逐条用例定制场景, 建一个间隔梯子全库复用。
+#
+# 梯子设计 (间隔 g 能判别冷却 C 当且仅当 g ∈ (C/2, C] 或 (C, 2C]):
+# - z1 (s1/s2, Arduino1) 触发间隔序列: 75, 45, 875, 179.5, 220.5, 180.5, 219.5,
+#   200, 450, 1500 —— 覆盖 C ∈ {60, 300, 600} 的 /2 与 x2 判别带, 以及
+#   window_s ∈ {180} 的 -1 (179.5)、+1 (180.5)、x2 (200) 判别带
+#   (湿区间刻意重叠: window 数的是"此刻湿着 + 变湿时刻同窗", 不重叠数不出 2);
+# - z2 (s3/s4, Arduino2) 小梯子: 75, 45, 540, 800, 900 —— 服务 zone 2 作用域的用例;
+# - z3 (s5, UNKNOWN_DEVICE) 小梯子: 75, 45, 420, 850 —— 服务后场用例;
+#   s0 刻意不出现 (它在库存里"从未上报", 用例的 also_accept 论证依赖这一点);
+# - t=2400 s4 湿 + t=2450 s1 湿: same_zone 数 1、any_zone 数 2,
+#   count_within 变异体的判别点;
+# - DRY 事件本身让 to:WET->DRY 变异体可分。
+name: eval_wet_ladder
+description: 评测用 —— 三个区的湿/干事件按判别性间隔梯子排布, 服务 cooldown/window/count_within/scope 变异体
+events:
+  # ---- z1 冷却梯子 (C=60 带) ----
+  - {at_s: 5,      kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 810}
+  - {at_s: 50,     kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 90}
+  - {at_s: 80,     kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 820}
+  - {at_s: 110,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 85}
+  - {at_s: 125,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 830}
+  - {at_s: 180,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 80}
+  # ---- z2 冷却梯子 ----
+  - {at_s: 40,     kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 840}
+  - {at_s: 100,    kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 95}
+  - {at_s: 115,    kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 850}
+  - {at_s: 150,    kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 90}
+  - {at_s: 160,    kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 860}
+  - {at_s: 300,    kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 88}
+  - {at_s: 700,    kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 870}
+  - {at_s: 1500,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 855}
+  - {at_s: 1600,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 87}
+  - {at_s: 1750,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 862}
+  - {at_s: 1850,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 64}
+  # s3 自己的小梯子 (75/45): 3 号在 CSV 里几乎不说话, sensor[3] 类用例只能靠这里
+  - {at_s: 760,    kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 93}
+  - {at_s: 775,    kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 871}
+  - {at_s: 810,    kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 94}
+  - {at_s: 820,    kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 873}
+  - {at_s: 900,    kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 63}
+  # ---- z3 冷却梯子 ----
+  - {at_s: 60,     kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: WET, value: 900}
+  - {at_s: 100,    kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: DRY, value: 70}
+  - {at_s: 135,    kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: WET, value: 910}
+  - {at_s: 170,    kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: DRY, value: 72}
+  - {at_s: 180,    kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: WET, value: 920}
+  - {at_s: 260,    kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: DRY, value: 75}
+  - {at_s: 600,    kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: WET, value: 930}
+  - {at_s: 700,    kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: DRY, value: 78}
+  - {at_s: 1450,   kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: WET, value: 940}
+  - {at_s: 1550,   kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: DRY, value: 76}
+  - {at_s: 1700,   kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: WET, value: 945}
+  - {at_s: 1780,   kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: DRY, value: 62}
+  # ---- z1 window 梯子 A: 变湿间隔 179.5 (w180 数得到 2, w179 数不到) ----
+  - {at_s: 1000,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 815}
+  - {at_s: 1179.5, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 825}
+  - {at_s: 1300,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 82}
+  - {at_s: 1305,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 84}
+  # ---- z1 window 梯子 B: 间隔 180.5 (w181 数得到, w180 数不到) ----
+  - {at_s: 1400,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 812}
+  - {at_s: 1580.5, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 818}
+  - {at_s: 1700,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 79}
+  - {at_s: 1705,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 81}
+  # ---- z1 window 梯子 C: 间隔 200 (w360 数得到, w180 数不到) ----
+  - {at_s: 1800,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 809}
+  - {at_s: 2000,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 811}
+  - {at_s: 2100,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 83}
+  - {at_s: 2105,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 86}
+  # ---- count_within 判别点 + z1 的 (300,600] 冷却带 ----
+  - {at_s: 2400,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 845}
+  - {at_s: 2450,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 822}
+  - {at_s: 2600,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 77}
+  - {at_s: 2610,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 91}
+  # ---- z1 的 (900,1800] 冷却带 ----
+  - {at_s: 3950,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 819}
+  - {at_s: 4000,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 88}
+  # ---- 合格簇 D/E/F: 给 wet_sensor_count>=2 w180 的策略提供**多个**满足条件的
+  # 时刻, 相互间隔落在 C=600 的判别带 (D->E 460 ∈ (300,600]; D->F 900 ∈ (600,1200])
+  # —— 上面的冷却梯子只对无条件策略有效, 带条件的策略只在"两探头同窗都湿"时
+  # 才有产出机会, 没有多个这样的簇, 冷却变异体照样分不开 (第一轮准入的教训) ----
+  - {at_s: 4200,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 816}
+  - {at_s: 4290,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 817}
+  - {at_s: 4400,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 74}
+  - {at_s: 4410,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 73}
+  - {at_s: 4700,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 813}
+  - {at_s: 4750,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 814}
+  - {at_s: 4900,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 72}
+  - {at_s: 4910,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 71}
+  - {at_s: 5150,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 808}
+  - {at_s: 5190,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 807}
+  - {at_s: 5400,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 70}
+  - {at_s: 5410,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 69}
+  # ---- 孤立簇 G: 变湿间隔 180.5, 且距上一个合格簇 (F@5190) 超过 1000s ——
+  # w181 的变异体在这里产出而 w180 的 reference 不产出。第一版把 180.5 的簇放在
+  # 上一次产出 400s 内, 冷却 600 把差异全掩蔽了 (window 判别簇必须离前一次
+  # 产出比冷却更远, 本轮准入的教训) ----
+  - {at_s: 6200,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 806}
+  - {at_s: 6380.5, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 805}
+  - {at_s: 6500,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 68}
+  - {at_s: 6510,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 67}
+  # ---- z2 合格簇: 两个 z2 探头 50s 内相继湿 —— scope.ids:+2 与 ->global 的
+  # 变异体在这里产出, zone[1] 的 reference 不产出 ----
+  - {at_s: 6700,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 876}
+  - {at_s: 6750,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 878}
+  - {at_s: 6900,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 66}
+  - {at_s: 6910,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 65}
+  # ---- z2 合格簇 2/3 与 window 相位簇 (服务 zone[2] 的 wet_sensor_count 用例;
+  # 间隔设计与 z1 的 D/E/F/G 同理: 690 ∈ (600,1200], 400 ∈ (300,600],
+  # 939.5 后接 179.5 相位、1001 后接 180.5 相位) ----
+  - {at_s: 7400,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 875}
+  - {at_s: 7440,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 877}
+  - {at_s: 7600,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 61}
+  - {at_s: 7610,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 60}
+  - {at_s: 7800,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 879}
+  - {at_s: 7840,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 881}
+  - {at_s: 7950,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 59}
+  - {at_s: 7960,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 58}
+  - {at_s: 8200,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 883}
+  - {at_s: 8379.5, kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 885}
+  - {at_s: 8500,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 57}
+  - {at_s: 8510,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 56}
+  - {at_s: 9200,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 887}
+  - {at_s: 9380.5, kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 889}
+  - {at_s: 9500,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 55}
+  - {at_s: 9510,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 54}

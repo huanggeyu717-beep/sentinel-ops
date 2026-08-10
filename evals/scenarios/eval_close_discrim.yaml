@@ -1,0 +1,43 @@
+# 评测专用场景: 关单判别 (sensor_dry_for + close_incident 类策略)。
+#
+# 为哪些用例: simple-003 / fault-002 这类"干满 N 秒自动关单"。auto_close 只有
+# 一次关单, cooldown 变异体与 dry_for_s 的 ±1 相位全都分不开。
+#
+# 相位与间隔是挑过的 (tick=10s):
+# - s1 (z1) 转干在 t=99.5: dry_for=300 的关单时刻 399.5 -> tick 400;
+#   dry_for=301 -> 400.5 -> tick **410** (+1 可分);
+# - s2 (z1) 转干在 t=170.5: 关单时刻 470.5 -> tick 480;
+#   dry_for=299 -> 469.5 -> tick **470** (-1 可分);
+# - 两次关单 (tick 400 与 480) 相隔 80s ∈ (60, 120]: cooldown 60 两次都关,
+#   cooldown 120 吞掉第二次 (x2 可分); dry_for x2=600 -> 关单挪到 700/780 (可分);
+# - s4 (z2) 转干在 t=130: 关单时刻 430 -> tick 430: zone[1] 的 reference 不关它,
+#   scope.ids:+2 与 scope.type:->global 的变异体会关 (可分) —— 用例的陪跑开单
+#   策略要把 sensor 4 也圈进去, 否则 z2 没有事故可关;
+# - scope.type zone[1]->sensor[1] 的变异体错过 s2 的关单 (可分) ——
+#   simple-003 原先那条 known_equivalent 例外因此该删, 已删。
+name: eval_close_discrim
+description: 评测用 —— 三个传感器错相转干, 服务 dry_for 相位、关单冷却与作用域变异体
+events:
+  - {at_s: 10,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 850}
+  - {at_s: 20,    kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 860}
+  - {at_s: 30,    kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 870}
+  - {at_s: 99.5,  kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 80}
+  - {at_s: 130,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 85}
+  - {at_s: 170.5, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 82}
+  # ---- 第二批转干 (第一轮全量准入补入): ----
+  # s4 第二段: 转干 640.5 -> dry300 关灯/关单在 tick 950; dry_for=299 -> 939.5 ->
+  #   tick 940 (-1 可分, 第一段的 130 相位只抓得到 +1);
+  #   950 距 z1 的 480 有 470s, zone->global 变异体的 s4 产出不再被冷却吞掉
+  #   (第一段 s4 的 430 恰好落在 400 的 60s 冷却里, global 与 zone[1] 变得等价);
+  # s3: 转干 720.5 -> tick 1030, 距 s4 的 950 有 80s ∈ (60,120]:
+  #   zone[2] 关单策略的 cooldown x2 可分;
+  # s5/s0 (z3): 转干 800/870.5 -> tick 1100/1180, 相隔 80s: zone[3] 同理。
+  #   s0 在这里出现不与 ambig-002 的论证冲突 (那条的判分场景是 history_csv)。
+  - {at_s: 600,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 872}
+  - {at_s: 620,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 874}
+  - {at_s: 640.5, kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 84}
+  - {at_s: 700,   kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: WET, value: 880}
+  - {at_s: 710,   kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 0, zone_id: 3, state: WET, value: 882}
+  - {at_s: 720.5, kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 83}
+  - {at_s: 800,   kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 5, zone_id: 3, state: DRY, value: 79}
+  - {at_s: 870.5, kind: sensor_state, device_id: UNKNOWN_DEVICE, sensor_id: 0, zone_id: 3, state: DRY, value: 78}

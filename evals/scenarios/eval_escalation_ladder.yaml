@@ -1,0 +1,68 @@
+# 评测专用场景: 事故升级梯子 (incident_elapsed 触发 + wet_sensor_count 条件类策略)。
+#
+# 为哪些用例: combo-002 这类"开单 N 秒没人接就升级"。multi_sensor_escalation 只有
+# 一个够到 elapsed 的事故, 冷却 600 把后面全吞了, 13 个变异体分不开。
+#
+# 用例必须配两条陪跑 (companions): 开单 (变湿即开, sensor 级) + 关单
+# (dry_for 60, sensor 级) —— 没有关单陪跑, 同传感器的事故开一次就永远占着,
+# 后面的波次开不出新事故, 梯子失效。
+#
+# 波次设计 (tick=10s; 开单时刻 = 变湿事件时刻, elapsed crossing = 开单 + for_s):
+# - W1  s1 湿 @9.5  -> elapsed(120) crossing 129.5 -> tick 130 **产出#1**;
+#       for_s=121 -> 130.5 -> tick 140 (+1 可分); for_s=240 -> tick 250 (x2 可分)
+# - W2  s1 湿 @700.5 -> crossing 820.5 -> tick 830, 距#1 700s ∈ (600,1200]
+#       **产出#2**; cooldown x2=1200 吞掉它 (可分); for_s=119 -> 819.5 -> tick 820 (-1 可分)
+# - W2b s1 湿 @1150 -> tick 1270, 距#2 440s ∈ (300,600]: reference (600) 吞,
+#       cooldown /2=300 产出 (可分)
+# - W3  只有 s1 一个湿 (同区计数 1): reference 不产出; value-1 (>=1) 产出 (可分);
+#       s4 (z2) 同时湿着: count_within any_zone 数到 2, 产出 (可分)
+# - W4  s1 湿 @2600, s2 湿 @2779.5 (变湿间隔 179.5): w180 数到 2 -> **产出#3**
+#       (tick 2900, 距#2 2070s); w179 数不到 (-1 可分)
+# - W5  间隔 180.5: reference 不产出; w181 产出 (+1 可分); w360 产出 (x2 可分)
+# - Z2 波 s3@4300 + s4@4350: reference (zone[1]) 不理; scope.ids:+2 与 ->global
+#       的变异体产出 (可分); W4 里 reference 产出挂在 inc_s2 上,
+#       scope.type:zone->sensor[1] 错过它 (可分)
+# reference 预期产出: escalate+notify @ tick 130、830、2900, 共 3 次命中 6 个 Effect。
+name: eval_escalation_ladder
+description: 评测用 —— 五个波次的开单/无人接/关单循环, 服务 incident_elapsed 相位、冷却、窗口与作用域变异体
+events:
+  # W1
+  - {at_s: 9.5,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 850}
+  - {at_s: 100,    kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 855}
+  - {at_s: 200,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 80}
+  - {at_s: 210,    kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 82}
+  # W2
+  - {at_s: 700.5,  kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 852}
+  - {at_s: 750,    kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 857}
+  - {at_s: 950,    kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 81}
+  - {at_s: 960,    kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 83}
+  # W2b
+  - {at_s: 1150,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 853}
+  - {at_s: 1200,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 858}
+  - {at_s: 1350,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 79}
+  - {at_s: 1360,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 84}
+  # W3 (z1 只有 s1 湿; s4 在 z2 湿着, 给 any_zone 数)
+  - {at_s: 1850,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 870}
+  - {at_s: 1900,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 851}
+  - {at_s: 2100,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 78}
+  - {at_s: 2110,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 86}
+  # W4 (变湿间隔 179.5)
+  - {at_s: 2600,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 854}
+  - {at_s: 2779.5, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 859}
+  - {at_s: 3000,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 77}
+  - {at_s: 3010,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 85}
+  # W5 (变湿间隔 180.5)
+  - {at_s: 3600,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: WET, value: 856}
+  - {at_s: 3780.5, kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 861}
+  - {at_s: 4100,   kind: sensor_state, device_id: Arduino1, sensor_id: 1, zone_id: 1, state: DRY, value: 76}
+  - {at_s: 4110,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 87}
+  # Z2 波
+  - {at_s: 4300,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: WET, value: 872}
+  - {at_s: 4350,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: WET, value: 874}
+  - {at_s: 4500,   kind: sensor_state, device_id: Arduino2, sensor_id: 3, zone_id: 2, state: DRY, value: 88}
+  - {at_s: 4510,   kind: sensor_state, device_id: Arduino2, sensor_id: 4, zone_id: 2, state: DRY, value: 89}
+  # W6: 只有 s2 的波 —— 无条件的 elapsed 策略在前五个波次里全部命中在 s1 的
+  # 事故上 (s2 的都被冷却吞了), scope.type:zone->sensor[1] 的变异体会完全等价;
+  # 这一波让 reference 在 s2 的事故上产出一次, 那个变异体错过它 (可分)
+  - {at_s: 4800,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: WET, value: 863}
+  - {at_s: 5100,   kind: sensor_state, device_id: Arduino1, sensor_id: 2, zone_id: 1, state: DRY, value: 90}

@@ -1,4 +1,4 @@
-.PHONY: help up up-bg down logs sim sim-basic replay test test-api test-unit lint lint-fix lint-version dev-tools migrate migrate-status migrate-down migrate-new evals psql reset
+.PHONY: help up up-bg down logs sim sim-basic replay test test-api test-unit lint lint-fix lint-version dev-tools migrate migrate-status migrate-down migrate-new evals eval-db-reset psql reset
 
 help:           ## 列出所有命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -68,5 +68,8 @@ psql:           ## 进数据库命令行
 reset:          ## 清空数据库卷重来 (慎用)
 	docker compose down -v
 
-evals:
-	python evals/run_evals.py --arm A2 --dataset evals/datasets/policies_v1.jsonl
+evals:          ## 评测 dry-run (零调用零花费); 真跑要显式 --mode record --max-cost-cny
+	python evals/run_evals.py --arm L0 --mode record --dry-run
+
+eval-db-reset:  ## 重置评测库 (drop + create + 迁移 + dev seed + inventory 一致性校验)
+	python evals/run_evals.py --reset-db
