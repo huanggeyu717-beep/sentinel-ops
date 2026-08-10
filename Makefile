@@ -1,4 +1,4 @@
-.PHONY: help up up-bg down logs sim sim-basic replay test test-api test-unit lint lint-fix lint-version dev-tools migrate migrate-status migrate-down migrate-new evals eval-db-reset psql reset
+.PHONY: help up up-bg down logs sim sim-basic replay test test-api test-unit lint lint-fix lint-version ci-repro ci-lint-repro ci-unit-repro dev-tools migrate migrate-status migrate-down migrate-new evals eval-db-reset psql reset
 
 help:           ## 列出所有命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -43,6 +43,19 @@ lint-fix:       ## 自动修可修的 lint 问题
 
 lint-version:   ## 确认本机 ruff 版本与 requirements-dev.txt 锁定的一致 (见 ADR-005)
 	@bash scripts/ci/check-tool-versions.sh
+
+# 本机 venv 比 CI 富, 所以 make lint / make test 跑绿**证明不了 CI 会绿** ——
+# 本项目已经为此栽了三次 (defect-log 案例 5)。下面三个目标在全新空 venv 里
+# 按 CI 的方式装依赖再跑, 是本机唯一能证明 CI 会绿的办法。
+ci-repro:       ## 在全新空 venv 里复现 CI 的 lint + engine 两个 job
+	bash scripts/dev/ci-env-repro.sh lint
+	bash scripts/dev/ci-env-repro.sh unit
+
+ci-lint-repro:  ## 只复现 lint job (ruff + mypy, 装全量依赖)
+	bash scripts/dev/ci-env-repro.sh lint
+
+ci-unit-repro:  ## 只复现 engine job (纯函数档, 依赖故意贫瘠 —— 坑都在这里)
+	bash scripts/dev/ci-env-repro.sh unit
 
 dev-tools:      ## 安装/对齐本机工具链版本 (macOS 系统 Python 需要 --break-system-packages, 已自动兜底)
 	pip3 install -r requirements-dev.txt \

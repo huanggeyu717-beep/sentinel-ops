@@ -9,17 +9,31 @@ on:
 # 见 docs/adr/ADR-005-pin-lint-toolchain.md。
 
 jobs:
-  engine:
-    name: policy_engine + device-sim (纯函数, 秒级)
+  # lint 与 engine 必须是两个 job, 不能是同一个 job 的两步 (W5 修):
+  # mypy 要检查 apps/api 就得装 fastapi / sqlalchemy / httpx / asyncpg,
+  # 而 engine job 的立身之本恰恰是**装不到这些** —— 那份贫瘠就是"单元档真的离线"
+  # 这个保证本身。同一个 job 里 pip install 会跨步骤留下, lint 装完就把 engine
+  # 的贫瘠污染掉了, 于是"单元档不许连库连网"这条约定再也没有东西守得住。
+  lint:
+    name: ruff + mypy (全仓静态检查)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: bash scripts/ci/lint.sh
+
+  engine:
+    name: policy_engine + device-sim + evals 离线档 (纯函数, 秒级)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
       - run: bash scripts/ci/test-unit.sh
 
   api:
+    # 这个 job 还兼跑 evals/runner/tests (需要 httpx / asyncpg 的那批, 见 test-api.sh)
     name: api (带真实 Postgres)
     runs-on: ubuntu-latest
     services:

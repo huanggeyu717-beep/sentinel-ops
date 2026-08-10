@@ -173,3 +173,88 @@ status/diff 这类可选锁场景)。还原文件一律用 `cp` 备份, 不用 g
   占比) 进 summary、**不进成功率**: 多余追问是真实失败模式, 但把它算成
   "没产出草案"就是拿设施缺陷冒充模型缺陷;
 - 报告纪律一条: **见到某一格反直觉地变差, 当成待查项主动报上来**, 不要只报总分。
+
+---
+
+## 案例 5 — 一条从进 CI 那天起就没绿过的检查 (2026-08-10)
+
+**日期 / 模块**: 2026-08-10 / `scripts/ci/lint.sh` + `.github/workflows/ci.yml`
+(W5 CI 修复)。缺陷由 W2 的 CI 重构引入 (commit `e5ad670`), 由 W5 排查
+"engine job 红了"时才被看见; 修复由 Claude Code 执行, prompt 见
+`W5-CI修复-给CC的prompt.md`。
+
+**生成上下文**: W2 把 mypy 加进 `scripts/ci/lint.sh`, 并在文件里写下理由 ——
+"mypy 以前只在本机 make lint 里跑, CI 完全不跑 —— 等于它拦不住任何东西。
+放进这里之后, ruff 和 mypy 两道检查在本机与 CI 执行的是同一份脚本。"
+这句话的每个字都对, 而且它做的正是本项目一贯提倡的事: **把约定变成 CI 能拦的规则**。
+
+**缺陷**: `lint.sh` 挂在 engine job 上, 而那个 job 的立身之本是**故意只装
+`requirements-dev.txt`** ("纯函数, 秒级, 不连库不连网")。mypy 看不见
+fastapi / sqlalchemy / httpx / asyncpg 时不会"少检查一点", 它对每一条 import
+报 `import-not-found` 然后 exit 1 —— **一条类型都没检查成, 而且当场红**。
+
+所以这条检查从**进 CI 的第一次 push 起就没有绿过一次**:
+
+| run | 时间 | engine job | mypy 报错 |
+|---|---|---|---|
+| `31095732539` | 2026-08-06 11:03 | 绿 | (mypy 尚未进 CI) |
+| `31130969427` | 2026-08-06 23:25 | **红** | 39 个, 全是 import-not-found |
+| `31132371922` | 2026-08-06 23:48 | **红** | 41 个 |
+| … 中间 10 次 push, 每一次 | | **红** | |
+| `31424990736` | 2026-08-10 19:37 | **红** | 89 个 |
+
+**四天、十二次连续推送, 主分支的 CI 一直是红的。**
+
+**发现**: W5 收尾时终于去看这个红灯。而**第一版诊断也错了** —— prompt 里写的根因是
+`test-unit.sh` 把整个 `evals` 收进了单元档 (`evals/runner/` 下有 import httpx /
+asyncpg 的模块)。这个观察本身没错, 但 `gh run view` 一看就清楚:
+
+```
+X Run bash scripts/ci/lint.sh      <- 真正失败的是这一步
+- Run bash scripts/ci/test-unit.sh <- "-" = 前一步挂了, 它根本没跑过
+```
+
+`test-unit.sh` 从来没执行过, 那个坑还没来得及发作。而 89 个报错里**只有 2 个来自
+evals** (`cli.py` 与 `test_runner_guardrails.py` 的 httpx), 另外 87 个是 apps/api
+的 fastapi / sqlalchemy —— 与 W5 毫无关系, 只是 W2 那天就在那儿。
+
+**根因 (两层)**:
+
+1. **执行层**: 一个 job 同时承担了两个互相冲突的角色 —— lint 要检查全仓, 就必须
+   看得见全仓的依赖; engine 要证明单元档真的离线, 就必须**装不到**那些依赖。
+   把它们放进同一个 job, 两个要求里必然有一个落空;
+2. **观察层 (这一条更值钱)**: 红灯亮了四天没人读。**"我加了一道检查"与"那道检查
+   在 CI 上真的跑起来了"是两件事** —— 这与案例 2 (看起来在守、其实永远不会失败
+   的断言)、与 SPEC-007 变异 M5 第三行 (三层守卫一起坏、一起相等) 是同一课的
+   第三个实例。区别在于这次连"它是不是绿的"都没人核。
+
+**"本机绿、CI 红"在本项目是第四次**, 四次的形状完全一样:
+**本机环境比 CI 富, 所以本机跑绿证明不了 CI 会绿。**
+W1 是 ruff 版本 (本机旧、CI 装最新), W2 是 mypy 根本没进 CI, W2 这次是 mypy
+进了 CI 但装不到依赖, W5 是依赖分档 (本机 venv 有 apps/api 全套依赖)。
+对策不是"每次记得多跑一遍", 是**让本机能复现 CI 的环境**。
+
+**修复**:
+
+- `lint` 独占一个 job, `lint.sh` 自己装 `apps/api/requirements.txt`;
+  engine job 保留贫瘠依赖 (那份贫瘠就是"单元档真的离线"这个保证本身)。
+  **不能只在原 job 里补装依赖** —— pip install 在同一个 job 内跨步骤留存,
+  lint 装完就把 engine 的贫瘠污染掉了;
+- `evals` 按依赖拆目录: 离线的留 `evals/tests/` (归单元档), import httpx /
+  asyncpg 的挪 `evals/runner/tests/` (归 api 档)。**按目录拆不按文件名列清单** ——
+  列清单会重蹈"以后往那个目录加的测试静默地永远不执行"那个坑。
+
+**防回归**:
+
+- `evals/tests/test_grader_io_boundary.py::test_offline_tests__only_import_what_the_unit_job_installs`
+  —— AST 求**传递闭包**, 离线目录 (含它 import 到的任何 evals / app 模块) 只许
+  用单元档装得到的东西。**必须传递地扫**: 当初真正会让 CI 挂掉的
+  `test_runner_extract.py` 整个文件里没有 asyncpg 三个字, 它只写了
+  `from evals.runner.extract import ...`, 只看第一层的断言会对着它说"没问题";
+- 用的是**白名单**而不是黑名单 (`ALLOWED_THIRD_PARTY` = requirements-dev.txt 的投影):
+  黑名单只挡得住想得到的那几个;
+- 断言自带一条"闭包非空"的自检 —— 否则解析逻辑一坏, 它就变成又一个
+  **空集上恒真的全称命题** (本周第四次遇到这个形状);
+- `make ci-repro` / `make ci-unit-repro` / `make ci-lint-repro`
+  (`scripts/dev/ci-env-repro.sh`): 在全新空 venv 里按 CI 的方式装依赖再跑。
+  **这是本机唯一能证明 CI 会绿的办法**, 用现有 venv 验证等于没验证。

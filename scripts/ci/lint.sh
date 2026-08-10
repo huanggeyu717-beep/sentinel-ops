@@ -4,7 +4,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 TARGETS=(packages apps/api apps/device-sim evals)
 
-ci_pip_install -r requirements-dev.txt
+# mypy 要看见被检查代码的**运行时依赖**才能检查它: 没装 fastapi / sqlalchemy /
+# httpx / asyncpg 时, mypy 对每一条 import 报 import-not-found 直接 exit 1 ——
+# 不是"少检查一点", 是**一条都没检查成**。
+#
+# 这就是 W5 那次 CI 红的真根因, 而且它从 W2 把 mypy 放进 CI 那天起就一直红:
+# lint.sh 当时挂在 engine job 上, 而那个 job 故意只装 requirements-dev.txt。
+# 所以 lint 从进 CI 起就没有绿过一次, 也就从没拦下过任何东西 ——
+# 又一个"看起来在守、实际守空气"。
+#
+# 因此 lint 独占一个 job (ci.yml), 装全量依赖; engine job 保持依赖贫瘠,
+# 那份贫瘠正是"单元档真的离线"这个保证的来源, 不能被 lint 的安装污染。
+ci_pip_install -r apps/api/requirements.txt -r requirements-dev.txt
 
 section "ruff check ${TARGETS[*]}"
 if [ "${CI:-}" = "true" ]; then
@@ -17,6 +28,8 @@ fi
 
 # mypy 以前只在本机 make lint 里跑, CI 完全不跑 —— 等于它拦不住任何东西。
 # 放进这里之后, ruff 和 mypy 两道检查在本机与 CI 执行的是同一份脚本。
+# (但 W2 到 W5 之间它在 CI 上一次都没绿过, 原因见上面那段 pip install 的注释:
+#  "放进 CI" 与 "在 CI 上真的跑得起来" 是两件事。)
 # evals 是 W5 加的: 不列进目标的话, mypy.ini 里 evals.graders.* 的严格档白名单
 # 是空转的 —— 白名单只对被扫描的文件生效 (与"检查目标漏加"同一类问题)。
 section "mypy apps/api packages/policy_engine packages/scenario evals"

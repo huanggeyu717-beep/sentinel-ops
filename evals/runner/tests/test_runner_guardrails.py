@@ -1,5 +1,7 @@
 """成本护栏与抽样: dry-run 零网络 (验收 18)、超限当场停且已完成部分归档 (验收 19)、
-C2 确定性抽样 (SPEC-007 第四节)。全部离线, 不连库不连网。"""
+C2 确定性抽样 (SPEC-007 第四节)。运行时不连库不连网 (httpx 走 MockTransport),
+但 import 链上有 httpx 与 asyncpg —— 所以住 evals/runner/tests/ 归 api 档, 见本包
+__init__ 的说明。"""
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +15,9 @@ from evals.runner import apiproc, archive, cli
 from evals.runner.client import CostLedger, run_cases
 from evals.runner.sampling import C2_TARGET, sample_c2
 
-DATASET = Path(__file__).resolve().parents[1] / "datasets" / "policies_v1.jsonl"
+# evals/runner/tests/ -> evals/  (parents: [0]=tests [1]=runner [2]=evals)
+EVALS = Path(__file__).resolve().parents[2]
+DATASET = EVALS / "datasets" / "policies_v1.jsonl"
 
 
 def load_cases():
