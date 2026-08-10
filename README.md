@@ -1,5 +1,7 @@
 # Sentinel — AI-Native IoT Incident Automation Platform
 
+[![ci](https://github.com/huanggeyu717-beep/sentinel-ops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/huanggeyu717-beep/sentinel-ops/actions/workflows/ci.yml)
+
 > 将真实部署过的 AWS IoT 漏水监控系统重构为 AI 原生事故自动化平台:
 > 确定性引擎负责检测与响应执行; AI 负责把自然语言运营规则编译为
 > **经验证、可模拟、需审批**的响应策略, 并为已解决事故生成可审计报告。
