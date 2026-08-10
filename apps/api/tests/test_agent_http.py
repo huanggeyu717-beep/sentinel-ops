@@ -57,7 +57,8 @@ def happy_script() -> list[LLMResponse]:
 
 def clarify_script() -> list[LLMResponse]:
     return [say("要开单, 但没说通知谁"),
-            tool("ask_clarification", question="触发后要通知哪个角色?")]
+            tool("ask_clarification", question="触发后要通知哪个角色?",
+                 missing_slots=["role"])]
 
 
 class SlowLLM:

@@ -76,9 +76,14 @@ def test_get_available_actions__same_source_as_engine_schema(svc):
 
 def test_simulation_sources__scenarios_plus_history_csv():
     sources = simulation_sources()
-    assert "history_csv" in sources
-    assert "multi_sensor_escalation" in sources and "auto_close" in sources
+    # 精确相等而不是"包含": evals/scenarios/ 的评测专用场景**不许**混进这个枚举
+    # (SPEC-007 第七节 —— 演练面板与模型的可选数据源都来自它, 店长不该看见
+    # eval_* 场景, 模型也不该能选它们)。新增产品场景时更新这行是刻意的门槛。
+    assert set(sources) == {
+        "auto_close", "basic_spill", "multi_sensor_escalation", "history_csv"
+    }
     assert not any("/" in s or s.endswith(".csv") for s in sources)  # 不暴露路径
+    assert not any(s.startswith("eval") for s in sources)
 
 
 def test_simulate_policy__unknown_source_rejected(svc):
@@ -177,6 +182,82 @@ def test_version_source__agent_vs_human(svc):
     assert all(v[1] == 3 for v in by_id.values())  # created_by 都是发起的人
 
 
+# ===== SPEC-007 验收 23: missing_slots 从工具入参一路落库并读得回 =====
+
+
+async def _claimed_task(factory, input_text):
+    async with factory() as session, session.begin():
+        created = await agent_service.create_task(
+            session, user_id=3, input_text=input_text
+        )
+        task_id = created["task_id"]
+        assert await agent_service.claim_task(session, task_id, "t")
+    return task_id
+
+
+def test_ask_clarification__missing_slots_written_and_read_back(svc):
+    """变异 M8 的靶子: 工具入参照收 missing_slots、落库那一步不写这一列时,
+    这条必须红。前四处同步全做对、只漏落库, 参数就只活在内存里 —— ambiguous
+    那 16 条判分读不到任何东西, 而且不会报错 (SPEC-007 第九节)。
+    断言刻意从库里读, 不从工具返回值读 (返回值可能从入参直接带出来, 绕过库)。"""
+    async def go(factory):
+        task_id = await _claimed_task(factory, "槽位落库测试")
+        async with factory() as session, session.begin():
+            ctx = ToolContext(session=session, task_id=task_id, user_id=3,
+                              runner_id="t")
+            await run_tool(ctx, "ask_clarification", {
+                "question": "通知谁? 管哪个区?",
+                "missing_slots": ["role", "scope", "role"],  # 重复项该被去重
+            })
+        async with factory() as session:
+            from sqlalchemy import text
+            return (await session.execute(text(
+                "SELECT missing_slots FROM agent_clarifications "
+                "WHERE task_id = :t"), {"t": task_id},
+            )).scalar_one()
+
+    assert list(svc(go)) == ["role", "scope"]  # 去重保序, 读自数据库
+
+
+def test_ask_clarification__slots_outside_enum_rejected(svc):
+    """service 层校验取值都在七项枚举内, 不信任模型输入 (CLAUDE.md 不变量 5
+    的同一条道理); 缺失与空数组同样拒绝 —— 新写入的行必须非空 (0009)。"""
+    async def go(factory):
+        task_id = await _claimed_task(factory, "槽位校验测试")
+        for bad_args in (
+            {"question": "?", "missing_slots": ["scope", "颜色"]},  # 枚举外
+            {"question": "?", "missing_slots": []},                 # 空
+            {"question": "?", "missing_slots": "scope"},            # 非数组
+            {"question": "?"},                                       # 缺失
+        ):
+            async with factory() as session, session.begin():
+                ctx = ToolContext(session=session, task_id=task_id, user_id=3,
+                                  runner_id="t")
+                with pytest.raises(InvalidToolArguments):
+                    await run_tool(ctx, "ask_clarification", bad_args)
+        async with factory() as session:
+            from sqlalchemy import text
+            return (await session.execute(text(
+                "SELECT count(*) FROM agent_clarifications WHERE task_id = :t"),
+                {"t": task_id},
+            )).scalar_one()
+
+    assert svc(go) == 0  # 全部被拒, 一行都没落
+
+
+def test_missing_slots_enum__tool_schema_and_service_same_source():
+    """工具 Schema 里的枚举与 service 校验用的枚举必须同源相等 —— 两份枚举
+    走散时, 模型按 Schema 给的值会被 service 拒掉 (白烧配额), 反之则枚举外的
+    值静默入库。手法同注册表相等断言 (本项目第六处)。"""
+    from app.services import agent_prompts
+    from app.services.agent_slots import MISSING_SLOTS
+
+    schema = {s["name"]: s for s in agent_prompts.tool_schemas(("ask_clarification",))}
+    props = schema["ask_clarification"]["parameters"]["properties"]
+    assert props["missing_slots"]["items"]["enum"] == list(MISSING_SLOTS)
+    assert "missing_slots" in schema["ask_clarification"]["parameters"]["required"]
+
+
 # ===== list_sensors 的 never_reported (修补五): 与 /status 同口径 =====
 
 
@@ -218,11 +299,11 @@ def test_llm_calls_used__counts_ai_usage_rows(svc):
             before = await agent_service.llm_calls_used(session, task_id)
             await agent_service.record_llm_usage(session, task_id, LLMResponse())
             await agent_service.record_llm_usage(
-                session, task_id, LLMResponse(estimated_cost_usd=0.006132)
+                session, task_id, LLMResponse(estimated_cost_cny=0.006132)
             )
             after = await agent_service.llm_calls_used(session, task_id)
             costs = (await session.execute(text(
-                "SELECT estimated_cost_usd FROM ai_usage WHERE task_id = :t "
+                "SELECT estimated_cost_cny FROM ai_usage WHERE task_id = :t "
                 "ORDER BY id"), {"t": task_id},
             )).scalars().all()
         return before, after, [float(c) for c in costs]

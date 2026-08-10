@@ -69,6 +69,7 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 from app.config import settings  # noqa: E402
 from app.services import agent_prompts, agent_runtime, agent_service  # noqa: E402
 from app.services.llm_client import (  # noqa: E402
+    DEFAULT_TEMPERATURE,
     ArkLLMClient,
     LLMRequest,
     RecordReplayLLMClient,
@@ -123,6 +124,7 @@ def ark() -> CappedArk:
         price_input_per_mtok=cfg.llm_price_input_per_mtok,
         price_output_per_mtok=cfg.llm_price_output_per_mtok,
         thinking=cfg.llm_thinking,
+        temperature=DEFAULT_TEMPERATURE,
     ))
 
 
@@ -134,6 +136,7 @@ class RecordMissing:
             directory=CASSETTES, model=settings().llm_model,
             prompt_version=agent_prompts.PROMPT_VERSION,
             thinking=settings().llm_thinking,
+            temperature=DEFAULT_TEMPERATURE,
         )
         self.replay = RecordReplayLLMClient(inner=None, mode="replay", **common)
         self.record = RecordReplayLLMClient(inner=ark(), mode="record", **common)
@@ -173,7 +176,7 @@ async def run_once(factory: Any, input_text: str, client: Any) -> tuple:
         timeline = await agent_service.get_timeline(session, task_id)
         usage = (await session.execute(sqltext(
             "SELECT model, prompt_version, input_tokens, output_tokens, latency_ms, "
-            "cache_hit, estimated_cost_usd FROM ai_usage WHERE task_id = :t ORDER BY id"),
+            "cache_hit, estimated_cost_cny FROM ai_usage WHERE task_id = :t ORDER BY id"),
             {"t": task_id})).mappings().all()
     print(f"task {task_id} outcome={outcome} wall={dt:.2f}s "
           f"error={task['error_code']}/{task['error_detail']}")
@@ -190,8 +193,7 @@ def print_run(timeline: list[dict], usage: list) -> None:
     total = 0.0
     for u in usage:
         print(dict(u))
-        total += float(u["estimated_cost_usd"])
-    # 列名叫 usd, 存的是人民币元 —— 改列名留给 W5 (SPEC-002 第九节末)
+        total += float(u["estimated_cost_cny"])
     print(f"--- 本任务共 {len(usage)} 次调用, 刊例价合计 ¥{total:.6f}")
 
 
@@ -210,6 +212,7 @@ async def cmd_smoke() -> None:
         "model": cfg.llm_model,
         "messages": [{"role": "user", "content": "回复一个字: 好"}],
         "thinking": {"type": cfg.llm_thinking},  # 与 ArkLLMClient 同形
+        "temperature": DEFAULT_TEMPERATURE,      # 同上 (SPEC-007 第五节)
         "tools": [{"type": "function", "function": {
             "name": "noop", "description": "占位工具, 验证 tools 字段被接受",
             "parameters": {"type": "object", "properties": {},
@@ -236,7 +239,7 @@ async def cmd_smoke() -> None:
         )._parse(resp.json(), latency_ms)
         print(f"客户端解析 OK: text={parsed.text!r} tool_call={parsed.tool_call} "
               f"in={parsed.input_tokens} out={parsed.output_tokens} "
-              f"cost=¥{parsed.estimated_cost_usd:.6f}")
+              f"cost=¥{parsed.estimated_cost_cny:.6f}")
 
 
 async def cmd_record_or_replay(factory: Any, cmd: str, task: str) -> None:
@@ -251,6 +254,7 @@ async def cmd_record_or_replay(factory: Any, cmd: str, task: str) -> None:
             inner=None, directory=CASSETTES, mode="replay",
             model=T.RECORDED_MODEL, prompt_version=agent_prompts.PROMPT_VERSION,
             thinking=settings().llm_thinking,
+            temperature=DEFAULT_TEMPERATURE,
         )
     task_id, outcome, _, timeline, usage = await run_once(factory, input_text, client)
     print_run(timeline, usage)

@@ -1,8 +1,9 @@
 {
   "key_fields": {
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
+    "prompt_version": "v3",
     "thinking": "disabled",
+    "temperature": 0.0,
     "messages": [
       {
         "role": "system",
@@ -20,12 +21,12 @@
   "stage": "parsing",
   "response": {
     "tool_call": null,
-    "text": "理解：监控对象为生鲜区的探头设备，当生鲜区内有两个探头在三分钟时间范围内同时检测到水浸信号（状态为湿）时，立即向生鲜区的主管发送水浸告警通知。",
+    "text": "理解：监控生鲜区的水浸探头，当该区域内有2个探头在3分钟内均检测到水浸（状态为湿）时，触发通知，通知对象为生鲜区的主管。",
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
-    "input_tokens": 792,
-    "output_tokens": 46,
-    "latency_ms": 3963,
-    "estimated_cost_usd": 0.006132
+    "prompt_version": "v3",
+    "input_tokens": 1056,
+    "output_tokens": 45,
+    "latency_ms": 3899,
+    "estimated_cost_cny": 0.007686
   }
 }

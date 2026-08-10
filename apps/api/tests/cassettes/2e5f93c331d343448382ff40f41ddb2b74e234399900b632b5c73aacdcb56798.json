@@ -1,8 +1,9 @@
 {
   "key_fields": {
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
+    "prompt_version": "v3",
     "thinking": "disabled",
+    "temperature": 0.0,
     "messages": [
       {
         "role": "system",
@@ -20,12 +21,12 @@
   "stage": "parsing",
   "response": {
     "tool_call": null,
-    "text": "理解：监控区域为后场，当该区域出现水浸（被判定为“湿了”）时，触发开单处置动作。",
+    "text": "理解：监控后场区域的水浸传感器，一旦检测到该区域发生水浸（即“湿了”），就触发开单动作。",
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
-    "input_tokens": 871,
-    "output_tokens": 30,
-    "latency_ms": 2117,
-    "estimated_cost_usd": 0.006126
+    "prompt_version": "v3",
+    "input_tokens": 959,
+    "output_tokens": 32,
+    "latency_ms": 2841,
+    "estimated_cost_cny": 0.006714
   }
 }

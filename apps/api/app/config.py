@@ -84,11 +84,33 @@ class Settings(BaseSettings):
     # 测试与评测依赖的录制在 apps/api/tests/cassettes/, 进版本库 (见 .gitignore 注释)
     # 单价是**人民币元 / 百万 token** (方舟 2026-08 刊例价, 不折美元 —— 折算引入
     # 一个天天在变的汇率, 同一次调用今天和下周算出来不一样, 可复现性就没了)。
-    # 算出的成本暂时落在名叫 estimated_cost_usd 的列里: 列名与币种不符是已知债,
-    # 改列名的迁移留给 W5 真正用到成本口径时一并做 (SPEC-002 第九节末), 在那之前
-    # 这一列存的就是人民币元。价目会变, 只用于消融实验的相对比较, 不是财务口径。
+    # 算出的成本落 ai_usage.estimated_cost_cny (迁移 0009 起列名与币种一致,
+    # W4 那笔"名叫 usd 存人民币"的债已还)。价目会变, 只用于消融实验的相对比较,
+    # 不是财务口径; 与方舟控制台的对账差异记 evals/COST.md。
     llm_price_input_per_mtok: float = 6.00
     llm_price_output_per_mtok: float = 30.00
+
+    # --- W5 评测与消融 (SPEC-007 第二段) ---
+    # 消融能力档: production / A0 / A1 / A2。production 与 A2 同义 (A2 就是 W4
+    # 出厂路径, SPEC-007 第四节), 默认值即出厂行为。评测 runner 每臂起一个独立
+    # API 进程、经环境变量设置本项; 不做请求级切换 —— 档位是臂的属性不是请求的。
+    agent_ablation_level: str = "production"
+    # 同代降档臂 (C1) 的 model id。**单独一个配置项, 不改 llm_model 的默认值**:
+    # 默认值是出厂配置, 改了它 W4 那批数字的口径就变了 (SPEC-007 第四节)。
+    # id 已经真实冒烟验证 (scripts/dev/probe_turbo_smoke.py, 2026-08-10, 1 次调用
+    # 回"收到"): 与 pro 同日期后缀; 控制台显示名 Doubao-Seed-2.1-turbo 不是接口 id,
+    # 裸的 doubao-seed-2-1-turbo 与带点号的拼法都是 404。
+    llm_model_turbo: str = "doubao-seed-2-1-turbo-260628"
+    # 评测库: 同一个 Postgres 实例另开一个 database, 跑同一份迁移, 每臂重置
+    # (SPEC-007 第七节)。不用"打标记+清理脚本"; 端口 5433 的理由同 database_url。
+    eval_database_url: str = (
+        "postgresql+asyncpg://sentinel:sentinel@localhost:5433/sentinel_eval"
+    )
+    # tool_fault 类用例的故障注入表 (JSON 文件路径, 空 = 关闭, 生产恒空)。
+    # 评测 runner 每臂生成一份并经 env 传入; 注入点在 agent_runtime._tool_step,
+    # 按 (归一化输入文本, 工具名) 匹配 —— 走 HTTP 的 runner 没有别的通道把
+    # "这条任务的这个工具要坏一次"送进后台协程。
+    agent_fault_injection_file: str = ""
 
     model_config = SettingsConfigDict(
         env_prefix="SENTINEL_", env_file=".env", extra="ignore"

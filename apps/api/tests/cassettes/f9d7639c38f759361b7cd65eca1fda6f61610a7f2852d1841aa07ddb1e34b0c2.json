@@ -1,8 +1,9 @@
 {
   "key_fields": {
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
+    "prompt_version": "v3",
     "thinking": "disabled",
+    "temperature": 0.0,
     "messages": [
       {
         "role": "system",
@@ -49,11 +50,11 @@
     },
     "text": null,
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
-    "input_tokens": 5623,
+    "prompt_version": "v3",
+    "input_tokens": 5711,
     "output_tokens": 118,
-    "latency_ms": 3810,
-    "estimated_cost_usd": 0.037278
+    "latency_ms": 6702,
+    "estimated_cost_cny": 0.037806
   },
-  "hand_edited": "response.tool_call.arguments.body.scope 手工改过 (SPEC-002 第九节第 3 条): 模型的真实输出是 {\"type\": \"sensor\", \"ids\": [5]} (刻意避开 never_reported 的 sensor 0), **不是**下面这个错的 zone 9。改成不存在的 zone 是为了稳定复现验收 4 的修复循环 (E_UNKNOWN_ZONE -> 仅凭错误码修对) —— 真模型不会稳定产出错 zone, 不造出来就测不到。本文件其余部分 (含 key_fields 与计量数字) 是真实录制。 (第三段重录: 库存 roles 补 viewer 后 prompt 变了, 与第二段同法重新手编)"
+  "hand_edited": "手工编辑 (W5 收尾重录, 2026-08-10): 模型对这句的真实输出是 scope zone[3] (W4 同句真实输出曾是 sensor[5]); 此处把 scope.ids 改成不存在的 [9], 用来稳定复现验收 4 的修复循环 (E_UNKNOWN_ZONE -> 仅凭错误码与 hint 修对)。真模型不会稳定产出错 zone, 不造出来这条就测不到。除 scope.ids 外其余字段均为模型真实输出。"
 }

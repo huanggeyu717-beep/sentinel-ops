@@ -35,8 +35,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import secrets
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
@@ -52,6 +55,7 @@ from .llm_client import (
     LLMResponse,
     LLMUnavailable,
     ModelProtocolError,
+    ReplayMiss,
 )
 
 log = logging.getLogger(__name__)
@@ -69,6 +73,110 @@ _TOOL_ATTEMPTS = 3
 _RETRY_BACKOFF_BASE_S = 0.5
 
 # prompt 内容与版本号在 agent_prompts (改 prompt 必须换号, 理由见那边 docstring)
+
+
+# ===== 消融能力档 (SPEC-007 第四节): 开关穿过同一份状态机, 不 fork =====
+#
+# 与 SPEC-007 的 profile 形状有一处刻意不一致, 报告第一节报备:
+# SPEC 列了 simulate 开关 (A0/A1=False), 但版本状态链 draft -> validated ->
+# simulated -> awaiting_approval 由 policy_service._advance_status 与数据库
+# CHECK 强制 —— request_approval 只接受 simulated。**校验与模拟这两步是架构,
+# 不是模型能力**, 任何档都关不掉它们; 能关掉的只有模型侧能力: 修复循环、追问、
+# 资源清单的呈现方式。留一个关不掉的 simulate 开关, 就是一个 M5 类变异永远
+# 打不红的假开关 (没有任何测试能守它) —— 这正是本项目最忌讳的形状, 所以不设。
+# simulate_feedback (A3, 把 ReplayReport 回喂模型) 保留字段但恒 False:
+# A3 定为不做 (SPEC-007 补入 27), 字段留着是让"未做"在类型上看得见。
+
+
+@dataclass(frozen=True)
+class AblationProfile:
+    """能力开关。默认路径 (不传 profile) 等价于 production() —— 验收 14/15。"""
+
+    inventory_in_prompt: bool   # A0: 资源清单静态文本进 system prompt, 无工具直出
+    discovery_tools: bool       # A1+: 走 discovering, 清单进 user 消息
+    validate_and_repair: bool   # A2+: 校验不过时进修复循环 (校验本身任何档都跑)
+    clarification: bool         # A2+: parsing 阶段 + ask_clarification 工具
+    simulate_feedback: bool     # A3: 未做, 恒 False
+
+    @classmethod
+    def production(cls) -> AblationProfile:
+        """W4 出厂路径 = A2 (SPEC-007 第四节: "A2 就是 W4 的出厂路径")。"""
+        return cls(
+            inventory_in_prompt=False,
+            discovery_tools=True,
+            validate_and_repair=True,
+            clarification=True,
+            simulate_feedback=False,
+        )
+
+    @classmethod
+    def from_level(cls, level: str) -> AblationProfile:
+        if level in ("production", "A2"):
+            return cls.production()
+        if level == "A0":
+            return cls(
+                inventory_in_prompt=True, discovery_tools=False,
+                validate_and_repair=False, clarification=False,
+                simulate_feedback=False,
+            )
+        if level == "A1":
+            return cls(
+                inventory_in_prompt=False, discovery_tools=True,
+                validate_and_repair=False, clarification=False,
+                simulate_feedback=False,
+            )
+        raise ValueError(f"未知消融档 {level!r}, 只认 production/A0/A1/A2")
+
+
+def _resolve_profile(profile: AblationProfile | None) -> AblationProfile:
+    """不传 profile 时按 config 解析 (默认 production)。runner 每臂一个 API
+    进程、经 SENTINEL_AGENT_ABLATION_LEVEL 设档; 生产部署永远不设即出厂行为。"""
+    if profile is not None:
+        return profile
+    return AblationProfile.from_level(settings().agent_ablation_level)
+
+
+# ===== tool_fault 故障注入 (仅评测, SPEC-007 第二节 tool_fault 类) =====
+#
+# runner 走 HTTP, 没有别的通道把"这条任务的这个工具要坏一次"送进后台协程,
+# 所以注入点只能在 _tool_step。生产恒关 (config.agent_fault_injection_file 为
+# 空字符串)。表按 (归一化输入文本, 工具名) 匹配, 但**注入的归属单位是用例不是
+# 文本**: 两条用例同文完全合法 (v1 里就有一对刻意同文的对照), 所以 runner 按
+# "激活窗口"维护这份文件 —— 只在带 inject 的那条用例的任务在跑时写入它的条目,
+# 任务终局即移除, 同文用例由 runner 串行并互斥 (evals/runner/cli.FaultWindow)。
+# 文件因此会在一次 run 中途变化, 缓存按 mtime 失效, 不能按路径缓存一次到老。
+# 两种故障与 SPEC-002 第八节的两类错误一一对应:
+#   timeout_once  第一次尝试抛 ToolTimeout (可重试), 退避后第二次放行;
+#   unretryable   每次尝试都抛不可重试错误 -> dead_letter (code=tool_error)。
+
+_FAULT_WHITESPACE_RE = re.compile(r"\s+")
+
+
+class EvalInjectedFault(Exception):
+    """评测注入的不可重试故障 (error_detail 里看得到类型名, 别当真实故障排查)。"""
+
+
+@lru_cache(maxsize=64)
+def _fault_table(path: str, mtime_ns: int) -> dict[tuple[str, str], str]:
+    """mtime 进缓存键: 同一路径内容变了 (激活窗口开/关) 必须重读。"""
+    entries = json.loads(Path(path).read_text())
+    return {
+        (_FAULT_WHITESPACE_RE.sub(" ", str(e["input"]).strip()), str(e["tool"])):
+            str(e["fault"])
+        for e in entries
+    }
+
+
+def _injected_fault(input_text: str, tool_name: str) -> str | None:
+    path = settings().agent_fault_injection_file
+    if not path:
+        return None
+    try:
+        mtime_ns = Path(path).stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+    normalized = _FAULT_WHITESPACE_RE.sub(" ", input_text.strip())
+    return _fault_table(path, mtime_ns).get((normalized, tool_name))
 
 
 class _TaskFinished(Exception):
@@ -98,6 +206,13 @@ class _RoundState:
     # 模型最近一次给出的草稿 body (本轮内存台账): repairing 的 prompt 要带上,
     # 不给草稿等于让模型盲改
     last_body: dict[str, Any] | None = None
+    # 消融能力档 (W5)。默认 production, 即 W4 出厂路径 —— 见 AblationProfile
+    profile: AblationProfile | None = None
+
+    @property
+    def caps(self) -> AblationProfile:
+        assert self.profile is not None  # run_task 入口已解析
+        return self.profile
 
 
 # ===== 入口 =====
@@ -108,11 +223,14 @@ async def run_task(
     llm: LLMClient,
     factory: async_sessionmaker[AsyncSession],
     runner_id: str = RUNNER_ID,
+    profile: AblationProfile | None = None,
 ) -> str:
     """跑一轮任务 (后台 asyncio 任务的主体; 本段无 HTTP, 由测试直接 await)。
 
     返回本轮结局: awaiting_approval / clarifying / failed / dead_letter /
     not_claimed / lease_lost。单轮预算只算机器在跑的时间, 跨轮不累加。
+    profile 不传时按 config 解析, 默认 production —— 两条路必须产出相同的
+    agent_steps 序列 (SPEC-007 验收 15, 由测试守着)。
     """
     async with factory() as session, session.begin():
         if not await agent_service.claim_task(session, task_id, runner_id):
@@ -132,6 +250,7 @@ async def run_task(
         stage=task["stage"] if task["stage"] != "clarifying" else "discovering",
         draft_version_id=draft,
         clarifications=_extract_clarifications(timeline),
+        profile=_resolve_profile(profile),
     )
     try:
         await asyncio.wait_for(
@@ -162,6 +281,17 @@ async def run_task(
             code="llm_error", detail=f"模型服务不可用: {e}",
         )
         return "dead_letter"
+    except ReplayMiss as e:
+        # 回放没命中: 这条任务判失败并留下可统计的错误码 (SPEC-007 验收 20),
+        # 不回退真模型、不静默跳过 —— miss 率本身是回归臂要报的数字。
+        # W4 时它会当成未分类异常炸掉后台协程、任务挂到租约清扫才收尸,
+        # 那样 miss 在报告里就成了"失联", 病因被换了一个名字。
+        await _fail(
+            factory, st, runner_id, status="dead_letter",
+            code="replay_miss",
+            detail=f"回放未命中 (stage={e.stage}, key={e.key[:16]}...)",
+        )
+        return "dead_letter"
     except TimeoutError:
         # 单轮执行超预算 -> dead_letter (SPEC-002 第四节失败出口表)
         await _fail(
@@ -185,6 +315,12 @@ async def _round(
 ) -> None:
     while True:
         if st.stage == "parsing":
+            if not st.caps.clarification:
+                # A0/A1: parsing 的产出只有复述文本 (不进任何后续 prompt,
+                # build_messages 不带它) 与一次追问机会 —— 追问能力关掉后,
+                # 这次调用对后续输出零影响, 纯烧钱, 跳过 (SPEC-007 第四节)
+                await _advance(st, factory, runner_id, "discovering")
+                continue
             resp = await _llm_call(st, llm, factory, runner_id, stage="parsing")
             # 不调工具是这个阶段的正常情况; 调了就必须是 ask_clarification ——
             # 越界与 compiling/repairing 同一口径走 _expect_tool 报协议错,
@@ -198,6 +334,10 @@ async def _round(
             )
             await _advance(st, factory, runner_id, "discovering")
         elif st.stage == "discovering":
+            # A0 (discovery_tools=False) 也走这里: 它的资源清单必须从**同一批**
+            # 只读 service 取 (SPEC-007 第四节 "与 A1 的工具同源"), 差别只在
+            # 清单进 system prompt 还是 user 消息。工具步骤照记 —— 这些是
+            # 运行时确定性驱动的本地查询, 不是模型能力, 藏起来才是造假。
             inventory: dict[str, Any] = {}
             for name in ("list_zones", "list_sensors", "list_roles", "list_employees"):
                 inventory[name] = await _tool_step(st, factory, runner_id, name, {})
@@ -209,22 +349,33 @@ async def _round(
             st.inventory = inventory
             await _advance(st, factory, runner_id, "compiling")
         elif st.stage == "compiling":
-            # 有草稿 (澄清回来那一轮) 只给就地改 —— 每个任务只新建一版草稿,
-            # 此后所有修复都在这一版上 (SPEC-002 第六节)
-            trim = "compiling" if st.draft_version_id is None else "compiling_with_draft"
-            resp = await _llm_call(st, llm, factory, runner_id, stage="compiling", trim=trim)
-            call = _expect_tool(resp, agent_tools.TOOLS_BY_STAGE[trim])
-            if call.tool == "ask_clarification":
-                await _clarify(st, factory, runner_id, resp)
-            result = await _tool_step(
-                st, factory, runner_id, call.tool,
-                _pin_draft(st, call.tool, call.arguments), resp=resp,
-            )
-            st.draft_version_id = result.get("version_id", st.draft_version_id)
-            if isinstance(call.arguments.get("body"), dict):
-                st.last_body = call.arguments["body"]
+            if st.caps.inventory_in_prompt:
+                await _compile_direct(st, llm, factory, runner_id)
+            else:
+                # 有草稿 (澄清回来那一轮) 只给就地改 —— 每个任务只新建一版草稿,
+                # 此后所有修复都在这一版上 (SPEC-002 第六节)
+                trim = (
+                    "compiling" if st.draft_version_id is None
+                    else "compiling_with_draft"
+                )
+                resp = await _llm_call(
+                    st, llm, factory, runner_id, stage="compiling", trim=trim
+                )
+                call = _expect_tool(resp, _stage_tools(st, trim))
+                if call.tool == "ask_clarification":
+                    await _clarify(st, factory, runner_id, resp)
+                result = await _tool_step(
+                    st, factory, runner_id, call.tool,
+                    _pin_draft(st, call.tool, call.arguments), resp=resp,
+                )
+                st.draft_version_id = result.get("version_id", st.draft_version_id)
+                if isinstance(call.arguments.get("body"), dict):
+                    st.last_body = call.arguments["body"]
             await _advance(st, factory, runner_id, "validating")
         elif st.stage == "validating":
+            # 校验任何档都跑: 它不是模型能力, 是版本状态链的一环 (draft ->
+            # validated -> simulated -> awaiting_approval, policy_service 与
+            # 数据库 CHECK 强制)。消融能关的是"校验不过之后有没有修复循环"。
             result = await _tool_step(
                 st, factory, runner_id, "validate_policy",
                 {"version_id": st.draft_version_id},
@@ -234,6 +385,17 @@ async def _round(
                 await _advance(st, factory, runner_id, "simulating")
             else:
                 st.last_issues = result["issues"]
+                if not st.caps.validate_and_repair:
+                    # A0/A1: 一次机会, 校验不过即终 —— failed 不是 dead_letter
+                    # (模型输出质量问题, 不是系统故障; 与 model_protocol_error
+                    # 同一档), 错误码单列让评测统计分得出"验证器拦下"这一层
+                    codes = [str(i.get("code")) for i in result["issues"]]
+                    await _fail(
+                        factory, st, runner_id, status="failed",
+                        code="validation_failed",
+                        detail=f"校验不通过且本档无修复能力: {codes}",
+                    )
+                    raise _TaskFinished("failed")
                 if st.repairs_used < MAX_REPAIRS:
                     await _advance(st, factory, runner_id, "repairing")
                 else:
@@ -246,7 +408,7 @@ async def _round(
                     await _clarify(st, factory, runner_id, resp)
         elif st.stage == "repairing":
             resp = await _llm_call(st, llm, factory, runner_id, stage="repairing")
-            call = _expect_tool(resp, agent_tools.TOOLS_BY_STAGE["repairing"])
+            call = _expect_tool(resp, _stage_tools(st, "repairing"))
             if call.tool == "ask_clarification":
                 await _clarify(st, factory, runner_id, resp)
             await _tool_step(
@@ -291,6 +453,69 @@ async def _advance(
 # ===== LLM 调用 (计量落 ai_usage, 总数硬上限跨轮累加) =====
 
 
+def _stage_tools(st: _RoundState, key: str) -> tuple[str, ...]:
+    """按能力档裁剪该阶段的工具清单: 追问能力关掉时 ask_clarification 整体消失
+    (不给模型、也不在 _expect_tool 的白名单里 —— 模型硬调就是协议错, 与调一个
+    不存在的工具同一口径)。裁剪仍然不是安全措施, 理由同 TOOLS_BY_STAGE。"""
+    names = agent_tools.TOOLS_BY_STAGE.get(key, ())
+    if not st.caps.clarification:
+        names = tuple(n for n in names if n != "ask_clarification")
+    return names
+
+
+def _parse_direct_output(text: str | None) -> tuple[str, dict[str, Any]]:
+    """A0 直出内容 -> (name, body)。只认 {"name": str, "body": object} 一种形状;
+    唯一的宽容是剥掉代码栅栏 (模型最常见的格式跑偏, 剥栅栏不改内容) ——
+    其余一律 InvalidToolArguments, 由 run_task 归成 model_protocol_error 落
+    failed: 直出档守不守得住输出协议, 本身就是这一档要量的东西之一。"""
+    if not text or not text.strip():
+        raise InvalidToolArguments("A0 直出: 模型没有给出任何文本")
+    raw = text.strip()
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        raw = "\n".join(lines[1:]).strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise InvalidToolArguments(f"A0 直出内容不是合法 JSON: {e}") from e
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("name"), str)
+        or not isinstance(data.get("body"), dict)
+    ):
+        raise InvalidToolArguments(
+            'A0 直出 JSON 必须形如 {"name": <字符串>, "body": <对象>}'
+        )
+    return data["name"], data["body"]
+
+
+async def _compile_direct(
+    st: _RoundState,
+    llm: LLMClient,
+    factory: async_sessionmaker[AsyncSession],
+    runner_id: str,
+) -> None:
+    """A0 直出档的编译: 一次无工具调用, 模型输出 JSON, 运行时代为建草稿。
+
+    走同一个 create_policy 工具执行路径 (schema 校验、审计、步骤记录一样不少) ——
+    直出省掉的是工具协议那一跳, 不是 service 层的任何一道闸。
+    """
+    resp = await _llm_call(st, llm, factory, runner_id, stage="compiling", direct=True)
+    if resp.tool_call is not None:
+        raise InvalidToolArguments(
+            f"A0 档不提供任何工具, 模型却发起了工具调用 {resp.tool_call.tool}"
+        )
+    name, body = _parse_direct_output(resp.text)
+    result = await _tool_step(
+        st, factory, runner_id, "create_policy",
+        {"name": name, "body": body}, resp=resp,
+    )
+    st.draft_version_id = result.get("version_id", st.draft_version_id)
+    st.last_body = body
+
+
 async def _llm_call(
     st: _RoundState,
     llm: LLMClient,
@@ -300,6 +525,7 @@ async def _llm_call(
     stage: str,
     trim: str | None = None,
     only_clarify: bool = False,
+    direct: bool = False,
 ) -> LLMResponse:
     async with factory() as session, session.begin():
         used = await agent_service.llm_calls_used(session, st.task_id)
@@ -309,13 +535,15 @@ async def _llm_call(
             detail=f"LLM 调用总数用尽 (上限 {settings().agent_max_llm_calls}, 跨轮累加)",
         )
         raise _TaskFinished("failed")
-    tool_names = (
-        ("ask_clarification",) if only_clarify
-        else agent_tools.TOOLS_BY_STAGE.get(trim or stage, ())
-    )
-    request = LLMRequest(
-        task_id=st.task_id, stage=stage,
-        messages=agent_prompts.build_messages(
+    if direct:
+        # A0: 无工具, 清单在 system prompt 里 (v3-a0, SPEC-007 第四节)
+        assert st.inventory is not None
+        messages = agent_prompts.build_messages_a0(
+            input_text=st.input_text, inventory=st.inventory
+        )
+        tool_names: tuple[str, ...] = ()
+    else:
+        messages = agent_prompts.build_messages(
             "clarify_only" if only_clarify else (trim or stage),
             input_text=st.input_text,
             target_policy_id=st.target_policy_id,
@@ -323,7 +551,14 @@ async def _llm_call(
             last_issues=st.last_issues,
             clarifications=st.clarifications,
             draft_body=st.last_body if stage == "repairing" else None,
-        ),
+        )
+        tool_names = (
+            ("ask_clarification",) if only_clarify
+            else _stage_tools(st, trim or stage)
+        )
+    request = LLMRequest(
+        task_id=st.task_id, stage=stage,
+        messages=messages,
         tools=agent_prompts.tool_schemas(tool_names),
     )
     try:
@@ -393,6 +628,14 @@ async def _tool_step(
     for attempt in range(_TOOL_ATTEMPTS):
         t0 = perf_counter()
         try:
+            # 评测故障注入 (生产恒关, 见 EvalInjectedFault 一节): 抛在工具执行
+            # 之前, 走与真实故障完全相同的两条既有路径 —— timeout 进重试退避,
+            # 不可重试进 dead_letter。不为注入开第三条收口路径。
+            fault = _injected_fault(st.input_text, name)
+            if fault == "timeout_once" and attempt == 0:
+                raise ToolTimeout(name)
+            if fault == "unretryable":
+                raise EvalInjectedFault(f"评测注入的不可重试故障 (tool={name})")
             async with factory() as session, session.begin():
                 ctx = ToolContext(
                     session=session, task_id=st.task_id,
@@ -499,9 +742,8 @@ async def _clarify(
     resp: LLMResponse,
 ) -> None:
     """模型举手问人。轮次 ≤ 3, 超出 -> failed (SPEC-002 第三节上限表)。"""
-    question = str((resp.tool_call.arguments if resp.tool_call else {}).get(
-        "question", ""
-    )) or "需要更多信息"
+    arguments = resp.tool_call.arguments if resp.tool_call else {}
+    question = str(arguments.get("question", "")) or "需要更多信息"
     async with factory() as session, session.begin():
         rounds = await agent_service.clarify_rounds_used(session, st.task_id)
     if rounds >= settings().agent_max_clarify_rounds:
@@ -515,7 +757,13 @@ async def _clarify(
             session=session, task_id=st.task_id,
             user_id=st.user_id, runner_id=runner_id,
         )
-        await agent_tools.run_tool(ctx, "ask_clarification", {"question": question})
+        # missing_slots 原样透传, 不设默认: 校验在 service 层 (枚举外/缺失都
+        # 归 model_protocol_error)。question 的 or 兜底是 W4 留下的展示层容错,
+        # 槽位不同 —— 它是判分依据, 编一个默认值等于替模型撒谎 (SPEC-007 第三节)
+        await agent_tools.run_tool(ctx, "ask_clarification", {
+            "question": question,
+            "missing_slots": arguments.get("missing_slots"),
+        })
     raise _TaskFinished("clarifying")
 
 

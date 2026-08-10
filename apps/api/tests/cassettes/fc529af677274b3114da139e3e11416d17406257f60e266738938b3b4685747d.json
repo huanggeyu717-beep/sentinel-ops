@@ -1,8 +1,9 @@
 {
   "key_fields": {
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
+    "prompt_version": "v3",
     "thinking": "disabled",
+    "temperature": 0.0,
     "messages": [
       {
         "role": "system",
@@ -47,10 +48,10 @@
     },
     "text": null,
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
-    "input_tokens": 3520,
+    "prompt_version": "v3",
+    "input_tokens": 3696,
     "output_tokens": 99,
-    "latency_ms": 3461,
-    "estimated_cost_usd": 0.02409
+    "latency_ms": 5137,
+    "estimated_cost_cny": 0.025146
   }
 }

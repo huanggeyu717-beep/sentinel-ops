@@ -1,8 +1,9 @@
 {
   "key_fields": {
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
+    "prompt_version": "v3",
     "thinking": "disabled",
+    "temperature": 0.0,
     "messages": [
       {
         "role": "system",
@@ -24,7 +25,7 @@
     "tool_call": {
       "tool": "create_policy",
       "arguments": {
-        "name": "生鲜区双探头3分钟内同湿通知主管",
+        "name": "生鲜区双探头三分钟内全湿通知主管",
         "body": {
           "scope": {
             "type": "zone",
@@ -58,10 +59,10 @@
     },
     "text": null,
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
-    "input_tokens": 5530,
-    "output_tokens": 163,
-    "latency_ms": 4268,
-    "estimated_cost_usd": 0.03807
+    "prompt_version": "v3",
+    "input_tokens": 5706,
+    "output_tokens": 161,
+    "latency_ms": 5794,
+    "estimated_cost_cny": 0.039066
   }
 }

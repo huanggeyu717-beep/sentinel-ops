@@ -30,6 +30,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .agent_slots import MISSING_SLOTS
 from .llm_client import LLMResponse
 
 
@@ -48,6 +49,12 @@ class TransitionConflict(Exception):
     def __init__(self, current_status: str) -> None:
         super().__init__(current_status)
         self.current_status = current_status
+
+
+class InvalidMissingSlots(ValueError):
+    """模型给的 missing_slots 不合法 (空/非数组/枚举外取值)。由工具层
+    (agent_tools) 翻成 InvalidToolArguments 归 model_protocol_error ——
+    service 层不 import agent_tools (方向相反), 所以自带一个异常类型。"""
 
 
 class LeaseLost(Exception):
@@ -513,8 +520,8 @@ async def complete_task(session: AsyncSession, task_id: int, decision: str) -> b
 # ===== 澄清 (多轮, SPEC-002 第三节) =====
 
 _INSERT_CLARIFICATION = text("""
-    INSERT INTO agent_clarifications (task_id, asked_seq, question)
-    VALUES (:task_id, :seq, :question)
+    INSERT INTO agent_clarifications (task_id, asked_seq, question, missing_slots)
+    VALUES (:task_id, :seq, :question, CAST(:missing_slots AS text[]))
     RETURNING id
 """)
 
@@ -551,17 +558,46 @@ _COUNT_CLARIFICATIONS = text(
 )
 
 
+def _validate_missing_slots(raw: Any) -> list[str]:
+    """取值必须全部落在七项封闭枚举内, 至少一项 —— 不信任模型输入 (CLAUDE.md
+    不变量 5 的同一条道理)。去重保序; 列可空只是为了不动 0008 前的历史行,
+    **新写入的行必须非空** (SPEC-007 第八节第 4 条), 这里就是那道保证。"""
+    if not isinstance(raw, list) or not raw:
+        raise InvalidMissingSlots(
+            f"missing_slots 必须是非空数组, 实得 {raw!r}; 取值域: {list(MISSING_SLOTS)}"
+        )
+    slots: list[str] = []
+    for item in raw:
+        if item not in MISSING_SLOTS:
+            raise InvalidMissingSlots(
+                f"未知槽位 {item!r}, 只能取: {list(MISSING_SLOTS)}"
+            )
+        if item not in slots:
+            slots.append(item)
+    return slots
+
+
 async def ask_clarification(
-    session: AsyncSession, task_id: int, runner_id: str, question: str
+    session: AsyncSession,
+    task_id: int,
+    runner_id: str,
+    question: str,
+    missing_slots: list[str],
 ) -> dict[str, Any]:
-    """把问题抛回给人: 发号、落一行澄清、任务转 clarifying 并交出租约。
-    "一个任务同时最多一个未回答的问题"由 agent_clarifications_one_pending 保证,
-    这里不写并发判断 (SPEC-002 第三节)。"""
+    """把问题抛回给人: 发号、落一行澄清 (含结构化槽位)、任务转 clarifying 并
+    交出租约。"一个任务同时最多一个未回答的问题"由 agent_clarifications_one_pending
+    保证, 这里不写并发判断 (SPEC-002 第三节)。
+
+    missing_slots 落库这一步是 W5 追问判分的命脉: 参数只活在工具入参里的话,
+    ambiguous 那 16 条判分读不到任何东西且不会报错 (SPEC-007 第九节, 变异 M8)。
+    """
+    slots = _validate_missing_slots(missing_slots)
     seq = await allocate_seq(session, task_id, runner_id)
     clarification_id = (
         await session.execute(
             _INSERT_CLARIFICATION,
-            {"task_id": task_id, "seq": seq, "question": question},
+            {"task_id": task_id, "seq": seq, "question": question,
+             "missing_slots": slots},
         )
     ).scalar_one()
     moved = (
@@ -609,7 +645,7 @@ async def clarify_rounds_used(session: AsyncSession, task_id: int) -> int:
 
 _INSERT_USAGE = text("""
     INSERT INTO ai_usage (task_id, model, prompt_version, input_tokens, output_tokens,
-                          estimated_cost_usd, latency_ms, cache_hit)
+                          estimated_cost_cny, latency_ms, cache_hit)
     VALUES (:task_id, :model, :prompt_version, :input_tokens, :output_tokens,
             :cost, :latency_ms, :cache_hit)
 """)
@@ -625,9 +661,9 @@ async def record_llm_usage(
         "prompt_version": response.prompt_version,
         "input_tokens": response.input_tokens,
         "output_tokens": response.output_tokens,
-        # 客户端按 config 单价估的成本, 人民币元 (列名叫 usd 是已知债, 改名迁移
-        # 留给 W5, SPEC-002 第九节末)。打桩与回放命中都是 0。
-        "cost": response.estimated_cost_usd,
+        # 客户端按 config 单价估的成本, 人民币元 (0009 起列名与币种一致)。
+        # 打桩与回放命中都是 0。
+        "cost": response.estimated_cost_cny,
         "latency_ms": response.latency_ms, "cache_hit": response.cache_hit,
     })
 

@@ -212,6 +212,15 @@ def test_cassette_key__changes_with_each_deciding_field():
     assert cassette_key("m", "v1", different_tools) != base
 
 
+def test_cassette_key__temperature_changes_key():
+    """SPEC-007 验收 17 (变异 M7 的靶子): 温度改变模型输出, 必须进键 ——
+    否则换温度后老录制会冒充新配置的行为, 比 miss 更糟。"""
+    base = cassette_key("m", "v1", _request())
+    assert cassette_key("m", "v1", _request(), temperature=1.0) != base
+    # 默认值与显式 0 是同一个键 (评测六个臂全是温度 0, 不该产生两套 cassette)
+    assert cassette_key("m", "v1", _request(), temperature=0.0) == base
+
+
 # ===== 录制回放器 (假 inner, 不连网) =====
 
 
@@ -230,7 +239,7 @@ def test_record_then_replay__hit_with_cache_hit_true_and_zero_cost(tmp_path):
         tool_call=LLMToolCall(tool="ask_clarification",
                               arguments={"question": "哪个区?"}),
         model="m", prompt_version="v1", input_tokens=100, output_tokens=20,
-        latency_ms=1234, estimated_cost_usd=0.5,
+        latency_ms=1234, estimated_cost_cny=0.5,
     )
     inner = CountingClient(recorded)
     rec = RecordReplayLLMClient(inner=inner, directory=tmp_path, mode="record",
@@ -245,7 +254,26 @@ def test_record_then_replay__hit_with_cache_hit_true_and_zero_cost(tmp_path):
     assert second.tool_call == recorded.tool_call
     assert second.input_tokens == 100 and second.output_tokens == 20
     # 回放没花钱也没等网络: 成本与延迟归零, 免得有人拿回放去回填 120 秒预算
-    assert second.estimated_cost_usd == 0.0 and second.latency_ms == 0
+    assert second.estimated_cost_cny == 0.0 and second.latency_ms == 0
+
+
+def test_replay_legacy_cassette_with_usd_key__no_type_error(tmp_path):
+    """改名前录的老 cassette 里成本键还叫 estimated_cost_usd —— 回放分支必须
+    显式 pop 掉它, 否则作为未知关键字参数传进 LLMResponse 直接 TypeError。
+    重录后老键不再出现, 但正确性不许指望重录来掩盖 (W5 第一段 prompt 第 5 条)。"""
+    request = _request()
+    key = cassette_key("m", "v1", request)
+    (tmp_path / f"{key}.json").write_text(json.dumps({
+        "response": {
+            "tool_call": None, "text": "老录制", "model": "m",
+            "prompt_version": "v1", "input_tokens": 7, "output_tokens": 3,
+            "latency_ms": 88, "estimated_cost_usd": 0.5,  # 老键
+        },
+    }))
+    replay = RecordReplayLLMClient(inner=None, directory=tmp_path, mode="replay",
+                                   model="m", prompt_version="v1")
+    resp = asyncio.run(replay.complete(request))
+    assert resp.text == "老录制" and resp.estimated_cost_cny == 0.0
 
 
 def test_replay_miss__fails_hard_no_fallback_to_real_model(tmp_path):
@@ -286,6 +314,9 @@ def test_ark__parses_tool_call_arguments_json_string():
         # 思考开关必须显式随请求发出: seed-2.1 默认开思考, 不发这个字段,
         # 单步 80 秒级, 60 秒调用上限必爆 (config.llm_thinking 注释里的实测)
         assert payload["thinking"] == {"type": "disabled"}
+        # 温度必须显式设 0, 不走服务端默认 (SPEC-007 第五节: "要可复现"与
+        # "不设温度"自相矛盾, 而这个矛盾此前没有任何东西会喊 —— 这行就是那声喊)
+        assert payload["temperature"] == 0
         return _chat_response({
             "tool_calls": [{"function": {
                 "name": "ask_clarification",
@@ -298,8 +329,8 @@ def test_ark__parses_tool_call_arguments_json_string():
     assert resp.tool_call == LLMToolCall(tool="ask_clarification",
                                          arguments={"question": "通知谁?"})
     assert resp.input_tokens == 1000 and resp.output_tokens == 500
-    # 单价 1.0 / 2.0 USD/Mtok: (1000*1 + 500*2) / 1e6
-    assert resp.estimated_cost_usd == pytest.approx(0.002)
+    # 单价 1.0 / 2.0 元/Mtok: (1000*1 + 500*2) / 1e6
+    assert resp.estimated_cost_cny == pytest.approx(0.002)
 
 
 def test_ark__invalid_arguments_json__model_protocol_error_with_usage():

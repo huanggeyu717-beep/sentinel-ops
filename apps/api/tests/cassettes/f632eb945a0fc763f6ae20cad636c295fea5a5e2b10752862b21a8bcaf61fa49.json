@@ -1,8 +1,9 @@
 {
   "key_fields": {
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
+    "prompt_version": "v3",
     "thinking": "disabled",
+    "temperature": 0.0,
     "messages": [
       {
         "role": "system",
@@ -20,12 +21,12 @@
   "stage": "parsing",
   "response": {
     "tool_call": null,
-    "text": "我理解这句话的意思是：要对后场区域的水浸探头进行监控，当满足判定\"后场湿了\"的条件时，自动创建一张 normal 级别的事故单，该策略触发后的冷却时间为 300 秒（即触发后 300 秒内不再因同一情况重复开单）。",
+    "text": "理解：监控后场区域的水浸传感器，一旦检测到该区域发生水浸（即“湿了”），就自动创建一张 normal 级别的事故工单；同一事件在 300 秒冷却期内不重复开单。",
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
-    "input_tokens": 885,
-    "output_tokens": 73,
-    "latency_ms": 3545,
-    "estimated_cost_usd": 0.0075
+    "prompt_version": "v3",
+    "input_tokens": 973,
+    "output_tokens": 54,
+    "latency_ms": 3810,
+    "estimated_cost_cny": 0.007458
   }
 }

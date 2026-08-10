@@ -1,8 +1,9 @@
 {
   "key_fields": {
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
+    "prompt_version": "v3",
     "thinking": "disabled",
+    "temperature": 0.0,
     "messages": [
       {
         "role": "system",
@@ -24,15 +25,20 @@
     "tool_call": {
       "tool": "ask_clarification",
       "arguments": {
-        "question": "请问\"后场湿了就开单\"需要把工单开成什么严重级别（normal / high / critical）？另外，后场目前只有 id=5 的传感器是正常上报过数据的（id=0 从未上报），是否就监控这一个探头，还是有其他要包含的对象？"
+        "question": "请补充以下信息以便生成策略：1) 开单的事故等级要设为 normal、high 还是 critical？2) 同一传感器/区域多久内不重复开单（cooldown 秒数，60-86400）？3) 后场目前只有 id=5 的传感器有过上报数据（id=0 从未上报过），是否仅监控该传感器，还是需要包含从未上报的 id=0？",
+        "missing_slots": [
+          "severity",
+          "cooldown",
+          "scope"
+        ]
       }
     },
     "text": null,
     "model": "doubao-seed-2-1-pro-260628",
-    "prompt_version": "v2",
-    "input_tokens": 5609,
-    "output_tokens": 98,
-    "latency_ms": 4131,
-    "estimated_cost_usd": 0.036594
+    "prompt_version": "v3",
+    "input_tokens": 5785,
+    "output_tokens": 155,
+    "latency_ms": 6979,
+    "estimated_cost_cny": 0.03936
   }
 }

@@ -203,7 +203,8 @@ def test_vague_input__asks_instead_of_guessing(svc):
     async def go(factory):
         task_id, outcome, _ = await _open_and_run(
             factory,
-            [tool("ask_clarification", question="通知谁? 几个探头算都湿了?")],
+            [tool("ask_clarification", question="通知谁? 几个探头算都湿了?",
+                  missing_slots=["role", "threshold"])],
             input_text="漏水了通知一下",
         )
         task = await _task(factory, task_id)
@@ -219,6 +220,28 @@ def test_vague_input__asks_instead_of_guessing(svc):
     assert task["runner_id"] is None  # 没有进程在跑它, 不参与失联清扫
 
 
+def test_clarify_without_missing_slots__protocol_error_not_silent_default(svc):
+    """模型问人却不报 missing_slots (SPEC-007 对 SPEC-002 的修订 1 定为必填):
+    归 model_protocol_error 落 failed, 不替模型编一个默认槽位 —— 槽位是判分
+    依据, 兜底默认值等于替模型撒谎。"""
+    async def go(factory):
+        task_id, outcome, _ = await _open_and_run(
+            factory,
+            [tool("ask_clarification", question="通知谁?")],  # 漏了 missing_slots
+            input_text="漏水了通知一下下",
+        )
+        task = await _task(factory, task_id)
+        rows = await _scalar(
+            factory,
+            "SELECT count(*) FROM agent_clarifications WHERE task_id = :t", t=task_id,
+        )
+        return outcome, task, rows
+
+    outcome, task, rows = svc(go)
+    assert outcome == "failed" and task["error_code"] == "model_protocol_error"
+    assert rows == 0  # 半截澄清行没有落库 (事务随异常回滚)
+
+
 def test_repair_exhausted__clarifying_then_same_task_resumes(svc):
     """连错两次、第三次改口问人 (验收 7); 人回答后**同一条任务**从 discovering
     继续, task_id 不变, Trace 接着往下长 (验收 8)。"""
@@ -229,7 +252,8 @@ def test_repair_exhausted__clarifying_then_same_task_resumes(svc):
              tool("create_policy", name="澄清后修好", body=WRONG_ZONE_BODY),
              tool("update_policy_draft", body=WRONG_ZONE_BODY),   # 修 1: 还是错
              tool("update_policy_draft", body=WRONG_ZONE_BODY),   # 修 2: 还是错
-             tool("ask_clarification", question="你说的区到底是哪个?")],  # 改口问人
+             tool("ask_clarification", question="你说的区到底是哪个?",
+                  missing_slots=["scope"])],  # 改口问人
             input_text="那个区湿了就开单",
         )
         assert outcome == "clarifying"  # 修满 2 次仍不过 -> 问人, 不是 failed
@@ -282,14 +306,14 @@ def test_clarify_rounds_exhausted__failed_and_draft_discarded(svc, monkeypatch):
              tool("create_policy", name="终将失败", body=WRONG_ZONE_BODY),
              tool("update_policy_draft", body=WRONG_ZONE_BODY),
              tool("update_policy_draft", body=WRONG_ZONE_BODY),
-             tool("ask_clarification", question="哪个区?")],
+             tool("ask_clarification", question="哪个区?", missing_slots=["scope"])],
             input_text="含糊其辞的输入",
         )
         assert outcome == "clarifying"
         async with factory() as session, session.begin():
             await agent_service.answer_clarification(session, task_id, OWNER, "还是含糊")
         _, outcome2, _ = await _open_and_run(
-            factory, [tool("ask_clarification", question="还是不懂")],
+            factory, [tool("ask_clarification", question="还是不懂", missing_slots=["scope"])],
             input_text="", task_id=task_id,
         )
         task = await _task(factory, task_id)

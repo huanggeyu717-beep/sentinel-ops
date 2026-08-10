@@ -64,7 +64,7 @@ def test_create_task__while_previous_clarifying_returns_it(svc):
         runner = await _claim(factory, first["task_id"])
         async with factory() as session, session.begin():
             await agent_service.ask_clarification(
-                session, first["task_id"], runner, "通知哪个角色?"
+                session, first["task_id"], runner, "通知哪个角色?", ["role"]
             )
         again = await _open_task(factory)
         return first, again
@@ -133,7 +133,9 @@ def test_timeline__steps_and_clarifications_share_one_ordered_seq(svc):
                 session, task_id, runner, tool_name="list_sensors",
                 result_summary={"count": 5},
             )
-            await agent_service.ask_clarification(session, task_id, runner, "哪个区?")
+            await agent_service.ask_clarification(
+                session, task_id, runner, "哪个区?", ["scope"]
+            )
         async with factory() as session, session.begin():
             await agent_service.answer_clarification(session, task_id, OWNER, "生鲜区")
         # 恢复后继续长
@@ -167,7 +169,9 @@ def test_answer_clarification__non_initiator_rejected(svc):
         task_id = created["task_id"]
         runner = await _claim(factory, task_id)
         async with factory() as session, session.begin():
-            await agent_service.ask_clarification(session, task_id, runner, "哪个区?")
+            await agent_service.ask_clarification(
+                session, task_id, runner, "哪个区?", ["scope"]
+            )
         with pytest.raises(agent_service.NotTaskOwner):
             async with factory() as session, session.begin():
                 await agent_service.answer_clarification(
@@ -193,7 +197,9 @@ def test_answer_clarification__concurrent_answers_one_wins(svc):
         task_id = created["task_id"]
         runner = await _claim(factory, task_id)
         async with factory() as session, session.begin():
-            await agent_service.ask_clarification(session, task_id, runner, "哪个区?")
+            await agent_service.ask_clarification(
+                session, task_id, runner, "哪个区?", ["scope"]
+            )
 
         async def answer(text):
             try:
@@ -323,7 +329,9 @@ def test_reap__answered_task_has_fresh_grace_period(svc):
                 "UPDATE agent_tasks SET created_at = now() - interval '10 minutes' "
                 "WHERE id = :id"), {"id": task_id},
             )
-            await agent_service.ask_clarification(session, task_id, runner, "哪个区?")
+            await agent_service.ask_clarification(
+                session, task_id, runner, "哪个区?", ["scope"]
+            )
         # 人现在才回答, 任务刚变回 running
         async with factory() as session, session.begin():
             await agent_service.answer_clarification(session, task_id, OWNER, "生鲜区")
@@ -411,7 +419,9 @@ def test_lease_gate__stale_runner_rejected_even_while_task_running(svc):
         task_id = created["task_id"]
         await _claim(factory, task_id, "runner-A")
         async with factory() as session, session.begin():
-            await agent_service.ask_clarification(session, task_id, "runner-A", "哪个区?")
+            await agent_service.ask_clarification(
+                session, task_id, "runner-A", "哪个区?", ["scope"]
+            )
         # A 在这里僵住; 人回答, 任务回 running, 新进程 B 认领接着跑
         async with factory() as session, session.begin():
             await agent_service.answer_clarification(session, task_id, OWNER, "生鲜区")
@@ -442,7 +452,9 @@ def test_reap__clarifying_over_ttl_becomes_dead_letter(svc):
         task_id = created["task_id"]
         runner = await _claim(factory, task_id)
         async with factory() as session, session.begin():
-            await agent_service.ask_clarification(session, task_id, runner, "哪个区?")
+            await agent_service.ask_clarification(
+                session, task_id, runner, "哪个区?", ["scope"]
+            )
         async with factory() as session, session.begin():
             from sqlalchemy import text
             await session.execute(text(

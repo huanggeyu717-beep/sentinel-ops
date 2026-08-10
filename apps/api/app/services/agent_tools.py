@@ -180,9 +180,16 @@ async def _request_approval(ctx: ToolContext, args: dict[str, Any]) -> Any:
 
 
 async def _ask_clarification(ctx: ToolContext, args: dict[str, Any]) -> Any:
-    return await agent_service.ask_clarification(
-        ctx.session, ctx.task_id, ctx.runner_id, str(_require(args, "question"))
-    )
+    try:
+        return await agent_service.ask_clarification(
+            ctx.session, ctx.task_id, ctx.runner_id,
+            str(_require(args, "question")),
+            _require(args, "missing_slots"),
+        )
+    except agent_service.InvalidMissingSlots as e:
+        # 枚举校验在 service 层 (不信任模型输入); 这里翻译异常类型, 让它归进
+        # model_protocol_error 落 failed, 而不是 tool_error 死信 (口径会错)
+        raise InvalidToolArguments(str(e)) from e
 
 
 # ===== 注册表 =====
