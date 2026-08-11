@@ -6,8 +6,9 @@
 ## 文件格式
 
 - 一行一条 JSON, 不 pretty print; 中文不转义 (`ensure_ascii=False`)。
-- `dataset_version`: **`v1.2` (sha256:e866faf135c0cccf)** —— 100 条定形 (v1.1 只改
-  fault-005 的注入工具; v1.2 只给会产出策略的 57 条补 `clarify_answer`, 见 CHANGELOG), 哈希是
+- `dataset_version`: **`v1.3` (sha256:a1c462f03418a50e)** —— 100 条定形 (v1.1 只改
+  fault-005 的注入工具; v1.2 给会产出策略的 57 条补 `clarify_answer`; v1.3 把全部 73 条
+  `clarify_answer` 由一段死文本改成**按槽位索引的字典**, 见 CHANGELOG), 哈希是
   policies_v1.jsonl 的内容 sha256 **截断到前 16 个十六进制字符** (用途上够用;
   拿完整 `sha256sum` 对比时取前 16 位, 否则会以为对不上), 与版本号一起进 run 快照;
   lint 断言 README 记录的哈希与文件现状一致 (改用例不换哈希当场红)。

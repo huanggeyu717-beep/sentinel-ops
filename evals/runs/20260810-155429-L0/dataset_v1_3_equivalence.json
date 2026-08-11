@@ -1,0 +1,28 @@
+{
+  "conclusion": "v1.2 与 v1.3 下逐条同分, 未重跑",
+  "dataset_sha_without_clarify_answer": "fe723b04309f7455",
+  "clarify_answer_shape": {
+    "v1.2": [
+      "str"
+    ],
+    "v1.3": [
+      "dict"
+    ]
+  },
+  "graders_reading_clarify_answer": [],
+  "ablation_profiles": {
+    "A0": {
+      "clarification": false,
+      "validate_and_repair": false
+    },
+    "A1": {
+      "clarification": false,
+      "validate_and_repair": false
+    }
+  },
+  "cases": 100,
+  "clarifying": [],
+  "clarify_rounds_gt_0": [],
+  "regrade_diff": [],
+  "same": true
+}

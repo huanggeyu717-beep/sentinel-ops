@@ -1,0 +1,5 @@
+{
+  "purpose": "改动澄清应答路径 (evals/runner/client.compose_answer + extract.fetch_pending_slots) 之后的开跑前探针: 两条必然多轮追问的用例, 真跑约 ¥0.2, 用来确认按槽位应答真的接上了, 免得整臂 ¥10 跑完才发现路径是断的。",
+  "usage": "python evals/run_evals.py --arm L2 --mode record --max-cost-cny 1 --cases-file scripts/dev/preflight_clarify_cases.json",
+  "case_ids": ["ambig-001", "repairable-001"]
+}

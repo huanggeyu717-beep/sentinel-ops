@@ -197,11 +197,43 @@ def test_clarify_answer__present_on_every_policy_producing_case():
         )
         if not produces_policy and expected["kind"] != "clarify":
             continue
-        if not str(expected.get("clarify_answer", "")).strip():
+        answer = expected.get("clarify_answer")
+        if not isinstance(answer, dict) or not any(
+            str(v).strip() for v in answer.values()
+        ):
             missing.append(c["id"])
     assert not missing, (
         f"这些用例会产出策略却没有冻结回答, 模型一追问就会被判'没产出草案': {missing}"
     )
+
+
+def test_clarify_answer__is_a_slot_dict_with_known_slots():
+    """`clarify_answer` 必须是**按槽位索引的字典**, 键在 MISSING_SLOTS 枚举里 (v1.3)。
+
+    v1.2 它是一段死文本, runner 每一轮把同一段话再念一遍 —— 而模型每一轮问的槽位
+    不一样, 从第二轮起它问的东西根本没被回答。后果是**一进第二轮就必然耗尽三轮
+    然后死**: L2 19 条 / C1 17 条, 无一存活, 且集中打击 repairable 与 ambiguous
+    这两类 —— 追问正是 A1→A2 最大的能力增量, 而它从没被公平测过。
+
+    这条断言钉住形状。**退回字符串不会让任何用例判错**, 只会让分数悄悄变差,
+    所以必须有东西专门看着它 (与 v1.2 那条同一个理由)。
+    """
+    bad_shape, bad_slots, empty = [], [], []
+    for c in _cases():
+        answer = c["expected"].get("clarify_answer")
+        if answer is None:
+            continue
+        if not isinstance(answer, dict):
+            bad_shape.append(f"{c['id']}({type(answer).__name__})")
+            continue
+        for slot, text in answer.items():
+            if slot not in MISSING_SLOTS:
+                bad_slots.append(f"{c['id']}.{slot}")
+            if not str(text).strip():
+                empty.append(f"{c['id']}.{slot}")
+    assert not bad_shape, f"clarify_answer 不是槽位字典 (v1.2 的死文本形态): {bad_shape}"
+    assert not bad_slots, f"槽位不在 MISSING_SLOTS 枚举里: {bad_slots}"
+    assert not empty, f"槽位答案是空的: {empty}"
 
 
 def test_missing_slots__from_agent_slots_enum():

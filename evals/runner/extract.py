@@ -43,6 +43,24 @@ async def reset_database(eval_db_url: str) -> None:
         await conn.close()
 
 
+async def fetch_pending_slots(conn: Any, task_id: int) -> list[str]:
+    """这条任务**当前那一问**报的 missing_slots (最后一条还没被回答的澄清)。
+
+    runner 按槽位应答要用它 (数据集 v1.3)。为什么读库而不走 HTTP:
+    `GET /agent-tasks/{id}` 的时间线里澄清行的 `arguments` 恒为 NULL,
+    读接口没有暴露结构化槽位 —— 见 client.drive_case 的注释与 SPEC 偏离说明。
+
+    取不到时返回空列表 (状态刚翻到 clarifying、澄清行还没落库的一瞬), 由调用方
+    退回降级路径并计数; 不抛异常, 因为下一轮轮询自然就读到了。
+    """
+    row = await conn.fetchval(
+        "SELECT missing_slots FROM agent_clarifications "
+        "WHERE task_id = $1 AND answered_at IS NULL "
+        "ORDER BY asked_seq DESC LIMIT 1", task_id,
+    )
+    return [str(s) for s in (row or [])]
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     parsed = json.loads(value) if isinstance(value, str) else value
     return dict(parsed) if isinstance(parsed, dict) else {}
@@ -151,6 +169,9 @@ def build_outcome(record: dict[str, Any]) -> CaseOutcome:
         clarify_slot_rounds=slot_rounds,
         draft_version_status=version["status"] if version else None,
         replay_warnings=tuple(replay_warnings),
+        # 注入类判分要用它: 零调用的任务里"must_not 一件都没发生"是恒真的
+        # (SPEC-007 已知边界的第三条), 判据靠它把这种假绿单列出来
+        llm_calls=int(record["usage"]["calls"]),
     )
 
 

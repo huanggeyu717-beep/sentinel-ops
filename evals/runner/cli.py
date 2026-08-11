@@ -193,6 +193,12 @@ async def _run_arm(
         extract.plain_dsn(eval_db_url), min_size=1, max_size=4
     )
     client = EvalApiClient(base_url, transport=transport)
+
+    async def slots_reader(task_id: int) -> list[str]:
+        """模型这一轮问的槽位 —— runner 按它挑答案 (数据集 v1.3, 见 drive_case)。"""
+        async with pool.acquire() as conn:
+            return await extract.fetch_pending_slots(conn, task_id)
+
     try:
         await client.login(EVAL_USER, EVAL_PASSWORD)
 
@@ -207,7 +213,8 @@ async def _run_arm(
                     await faults.activate(case)
                 try:
                     info = await drive_case(
-                        client, case, poll_s=POLL_INTERVAL_S, max_wall_s=max_wall_s
+                        client, case, poll_s=POLL_INTERVAL_S, max_wall_s=max_wall_s,
+                        read_missing_slots=slots_reader,
                     )
                 finally:
                     if has_inject:
@@ -285,6 +292,10 @@ def build_rows(
             "validation_codes": list(outcome.validation_codes),
             "replay_miss": outcome.error_code == "replay_miss",
             "runner_timeout": bool(info["runner_timeout"]),
+            # 按槽位应答读不到槽位、退回"把知道的都说一遍"的轮数 (数据集 v1.3)。
+            # 降级路径必须留痕: 它悄悄发生的话, v1.3 会退化回 v1.2 的死文本行为,
+            # 而分数看起来一切正常 —— 那正是 v1.2 那个洞的形状。
+            "blind_answers": int(info.get("blind_answers", 0)),
             "task_id": info["task_id"],
             "cassette_keys": cassette_map.get(int(info["task_id"]), []),
             **bundle["timing"],

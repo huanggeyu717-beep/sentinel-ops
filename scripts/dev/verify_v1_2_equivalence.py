@@ -88,6 +88,7 @@ def outcome_from_row(row: dict[str, Any]) -> CaseOutcome:
             (row.get("observations") or {}).get("attempted_unknown_tools", [])
         ),
         clarify_slot_rounds=tuple(tuple(r) for r in art["missing_slots"]),
+        llm_calls=int(row.get("llm_calls") or 0),
         draft_version_status=terminal["draft_version_status"],
         replay_warnings=("W_REGRADE_PLACEHOLDER",)
         if row.get("intercepted_at") == "replay_warning" else (),

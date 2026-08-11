@@ -19,7 +19,7 @@ RUNS_DIR = REPO / "evals" / "runs"
 COST_LEDGER = REPO / "evals" / "COST.md"
 # 流水追加锚点: 新行插在它**之前**, 这样"累计对账"那一节永远在流水下面。
 COST_APPEND_MARKER = "<!-- 流水追加点: 新行插在这一行之前 -->\n"
-DATASET_VERSION = "v1.2"
+DATASET_VERSION = "v1.3"
 
 
 def read_git_sha(repo: Path = REPO) -> str:

@@ -21,6 +21,37 @@ TERMINAL_STATUSES = frozenset(
 _MAX_ANSWER_ROUNDS = 3  # 服务端 agent_max_clarify_rounds 同值; 双保险防绕圈
 _BACKOFF_S = (0.5, 1.0, 2.0, 4.0, 8.0)
 
+# 用例没给这个槽位的答案时的兜底话 (数据集 v1.3)。**集中定义一处**, 不许每条用例
+# 各写各的 —— 兜底话散进 100 条用例里就是 100 份会走散的事实。
+_FALLBACK_ANSWERS = {"capability_gap": "这个系统做不到"}
+_FALLBACK_DEFAULT = "这条你按合理默认来"
+
+
+def compose_answer(
+    clarify_answer: dict[str, str], missing_slots: list[str]
+) -> str:
+    """按模型这一轮报的槽位挑出对应几条拼成回答 —— **模型问什么答什么**。
+
+    v1.2 之前这里是一段死文本, 每一轮都把同一段话再念一遍。而模型每一轮问的槽位
+    **不一样**: 从第二轮起它问的东西根本没被回答, 于是一进第二轮就必然耗尽三轮然后死
+    (L2 19 条 / C1 17 条, 无一存活)。真人不会对不同的问题念同一段稿子。
+
+    槽位顺序按模型问的顺序, 不按用例里的字典顺序 —— 答案的排列跟着问题走才像人在答。
+    """
+    if not missing_slots:
+        # 读不到槽位时退回"把知道的都说一遍": 比不回答强, 但它是降级路径,
+        # 调用方会把它记进 observations, 不许静默发生。
+        return "; ".join(clarify_answer.values())
+    parts = [
+        clarify_answer.get(slot)
+        or _FALLBACK_ANSWERS.get(slot, _FALLBACK_DEFAULT)
+        for slot in missing_slots
+    ]
+    seen: dict[str, None] = {}  # 同一段文本挂在多个槽位下时只说一遍, 保序去重
+    for p in parts:
+        seen.setdefault(p, None)
+    return "; ".join(seen)
+
 
 class BudgetExceeded(Exception):
     """累计花费超过 --max-cost-cny。调度层收到后停发新用例。"""
@@ -118,33 +149,53 @@ async def drive_case(
     *,
     poll_s: float,
     max_wall_s: float,
+    read_missing_slots: Callable[[int], Awaitable[list[str]]] | None = None,
 ) -> dict[str, Any]:
     """一条用例的完整生命周期: 建任务 -> 轮询 -> (clarify 类自动回答) -> 终局。
 
-    返回 {task_id, final_status, answered_rounds, runner_timeout}。
+    返回 {task_id, final_status, answered_rounds, runner_timeout, blind_answers}。
     没有冻结回答的用例停在 clarifying 即终局 (模型问了但用例没打算答 ——
     reject/capability_gap 类这正是成功形态, 判分侧自会定夺)。
+
+    `read_missing_slots` 读这条任务**当前那一问**报的槽位 (数据集 v1.3: 按槽位应答)。
+    它读的是评测库而不是 HTTP —— `GET /agent-tasks/{id}` 的时间线里澄清行
+    `arguments` 恒为 NULL, 服务端没有把结构化槽位暴露给读接口。**这是对
+    "runner 只走 HTTP" 的一处让步, 照实记**: 那条规矩的理由是"绕过 HTTP 就绕过了
+    权限层、去重层、并发预留槽位", 三者都在**写**路径上; 建任务与回答仍然只走 HTTP,
+    这里只是读一列已经落库的槽位 (判分侧本来就从同一张表读它)。
     """
     clarify_answer = case.get("expected", {}).get("clarify_answer")
     task_id = await client.create_task(str(case["input"]))
     answered = 0
+    blind = 0  # 读不到槽位、退回"把知道的都说一遍"的次数 —— 降级路径要留痕
     deadline = asyncio.get_running_loop().time() + max_wall_s
     while True:
         task = await client.get_task(task_id)
         status = str(task["status"])
         if status in TERMINAL_STATUSES:
             return {"task_id": task_id, "final_status": status,
-                    "answered_rounds": answered, "runner_timeout": False}
+                    "answered_rounds": answered, "runner_timeout": False,
+                    "blind_answers": blind}
         if status == "clarifying":
             if clarify_answer is None or answered >= _MAX_ANSWER_ROUNDS:
                 return {"task_id": task_id, "final_status": status,
-                        "answered_rounds": answered, "runner_timeout": False}
-            if await client.reply(task_id, str(clarify_answer)):
+                        "answered_rounds": answered, "runner_timeout": False,
+                        "blind_answers": blind}
+            slots = await read_missing_slots(task_id) if read_missing_slots else []
+            if not slots:
+                blind += 1
+            answer = (
+                compose_answer(clarify_answer, slots)
+                if isinstance(clarify_answer, dict)
+                else str(clarify_answer)  # v1.2 及更早的死文本形态, lint 已禁止
+            )
+            if await client.reply(task_id, answer):
                 answered += 1
         if asyncio.get_running_loop().time() > deadline:
             # 兜底: 服务端预算与清扫应保证终局, 走到这说明流水线自己有问题
             return {"task_id": task_id, "final_status": status,
-                    "answered_rounds": answered, "runner_timeout": True}
+                    "answered_rounds": answered, "runner_timeout": True,
+                    "blind_answers": blind}
         await asyncio.sleep(poll_s)
 
 
