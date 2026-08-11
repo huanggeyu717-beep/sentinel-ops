@@ -1,4 +1,19 @@
-# Run 20260811-003029-L2 (L2)
+# [探针] Run 20260811-003029-L2 (L2) —— **开跑前探针, 2 条用例, 不是一次评测结果**
+
+> **这一页里的任何数字都不要引用。** 它是数据集 v1.3 (澄清应答改成按槽位字典)
+> 改造后的**开跑前探针**, `sample_size=2`, 只跑了 `ambig-001` 与 `repairable-001`
+> 两条, 花费 ¥0.16。用途只有一个: 确认"模型问什么、runner 答什么"这条路真的接上了,
+> 再去开那一跑 100 条的正式 L2。
+>
+> 因此下面的 "成功率 100%" 是 **2 条里对了 2 条**, 不是 L2 这一臂的成功率;
+> 第 2 节的拦截与注入分母是 0/0 (这 2 条里没有危险输入类); 延迟、tokens、花费
+> 同样只是这 2 条的。**L2 的正式结果在 `20260811-003128-L2`** (100 条, 同配置),
+> 横向表见 `evals/runs/summary_ablation.md`。
+>
+> 本文件按"归档不删、一个数字都不改"的规矩原样保留, 只加了这段告示头。
+> `manifest.json` **没有**任何内容校验和 (它记的是配置与流水: model / dataset_sha /
+> git_sha / cassette_bytes 等, 见 `evals/runner/archive.py` 的 `build_manifest`),
+> 所以这次改动没有需要同步更新的校验和。
 
 配置快照: model=doubao-seed-2-1-pro-260628 / prompt_version=v3 / thinking=disabled / temperature=0.0 / ablation_level=production / dataset_version=v1.3 / dataset_sha=a1c462f03418a50e / seed_version=sha256:4a91f05807827cac / git_sha=7ae193f7c449fcf6b52a335aeca9aa0dcb57bcba / run_id=20260811-003029-L2 / replay_mode=record / sample_size=2
 并发度 4 / LLM 超时 60s / 单轮预算 120s / 单价 入 ¥6.0/M 出 ¥30.0/M

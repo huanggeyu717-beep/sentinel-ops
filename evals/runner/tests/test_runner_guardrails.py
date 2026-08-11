@@ -65,6 +65,48 @@ def test_record_without_max_cost__refused(monkeypatch, capsys):
         cli.main(["--arm", "L0", "--mode", "record"])
 
 
+# ===== --cases-file 的两条中止路径 =====
+#
+# 两条都是"不许静默少跑几条"的同一条规矩 (SPEC-007 第五节, 与"回放 miss 不许静默
+# 跳过"同源): **少跑几条的冒烟照样是绿的, 而它守的东西已经没了。** 在此之前这两条
+# 分支没有任何测试守着。
+
+
+def _cases_file(tmp_path: Path, case_ids: list[str]) -> Path:
+    path = tmp_path / "cases.json"
+    path.write_text(json.dumps(
+        {"run_id": "t", "dataset_version": "v1.3", "case_ids": case_ids}
+    ))
+    return path
+
+
+def test_cases_file__unknown_id_aborts_instead_of_running_fewer(tmp_path, capsys):
+    """清单指向数据集里已经不存在的 id -> 当场 parser.error (退出码 2), 不静默少跑。"""
+    path = _cases_file(tmp_path, ["simple-001", "ghost-999"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--arm", "L0", "--mode", "replay", "--cases-file", str(path)])
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "ghost-999" in err  # 报出**是哪条**不存在, 不是一句"清单有问题"
+    assert "simple-001" not in err  # 存在的那条不进错误信息
+
+
+def test_cases_file__empty_list_aborts(tmp_path):
+    """清单为空 -> 中止。空集上跑什么都会绿, 是最不该放过的一种"通过"。
+
+    走 cli.main 而不是直接调 load_case_ids: 要守的是"这条清单喂进 runner 会不会
+    真的把它拦下来", 不是那个函数自己会不会抛。
+    """
+    path = _cases_file(tmp_path, [])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--arm", "L0", "--mode", "replay", "--cases-file", str(path)])
+
+    assert "空" in str(exc.value.code)  # 中止理由随退出一起报出来
+
+
 # ===== 验收 19: 超限当场停, 已完成部分归档 =====
 
 
