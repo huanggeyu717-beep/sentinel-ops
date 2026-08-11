@@ -6,14 +6,26 @@
 3. 拆开 injection 判据 (把 `or submitted` 从 got_through 里挪出去) 之后,
    有没有任何一条 passed 会变 —— 对全部归档离线重算。
 """
-import json, sys, hashlib, pathlib
+import hashlib
+import json
+import pathlib
+
 
 def load(p):
-    return {json.loads(l)["id"]: json.loads(l) for l in open(p, encoding="utf-8")}
+    with open(p, encoding="utf-8") as fh:
+        return {json.loads(line)["id"]: json.loads(line) for line in fh}
 
 old = load("/tmp/v12.jsonl")
 new = load("evals/datasets/policies_v1.jsonl")
 print(f"用例数 v1.2={len(old)} v1.3={len(new)}  id 集合相同={set(old)==set(new)}")
+
+def _dump(obj):
+    return json.dumps(obj, sort_keys=True, ensure_ascii=False)
+
+
+def _norm(text):
+    return "".join(ch for ch in text if ch not in " ;；,，、\n")
+
 
 def strip(case):
     c = json.loads(json.dumps(case))
@@ -24,7 +36,7 @@ def strip(case):
 diff_ids, shape, content_bad = [], {"str": 0, "dict": 0, "none": 0}, []
 for cid in old:
     a, b = strip(old[cid]), strip(new[cid])
-    if json.dumps(a, sort_keys=True, ensure_ascii=False) != json.dumps(b, sort_keys=True, ensure_ascii=False):
+    if _dump(a) != _dump(b):
         diff_ids.append(cid)
     oa = (old[cid].get("expected") or {}).get("clarify_answer")
     na = (new[cid].get("expected") or {}).get("clarify_answer")
@@ -38,15 +50,16 @@ for cid in old:
         joined = "".join(na.values())
         # 每一段必须是原文的子串, 且原文被完全覆盖 (去掉分隔符后)
         subset = all(v and v in oa for v in na.values())
-        norm = lambda s: "".join(ch for ch in s if ch not in " ;；,，、\n")
-        covered = norm(oa) == norm("".join(na.values())) or set(norm(oa)) == set(norm(joined))
+        covered = (_norm(oa) == _norm("".join(na.values()))
+                   or set(_norm(oa)) == set(_norm(joined)))
         if not subset:
             content_bad.append((cid, "有一段不是原文的子串", na, oa))
         elif not covered:
             content_bad.append((cid, "原文没有被完全覆盖", na, oa))
 
 print(f"1. 除 clarify_answer 外有差异的用例: {len(diff_ids)} 条 {diff_ids[:10]}")
-print(f"   v1.3 里 clarify_answer 的形状: 字典 {shape['dict']} / 仍是字符串 {shape['str']} / 没有 {shape['none']}")
+print(f"   v1.3 里 clarify_answer 的形状: 字典 {shape['dict']}"
+      f" / 仍是字符串 {shape['str']} / 没有 {shape['none']}")
 print(f"2. 内容检查未通过的用例: {len(content_bad)} 条")
 for cid, why, na, oa in content_bad[:6]:
     print(f"   - {cid}: {why}\n       新={na}\n       旧={oa}")
@@ -73,5 +86,6 @@ for p in sorted(pathlib.Path("evals/runs").glob("*/results.jsonl")):
         passed_split = (not hits) and (not r["submitted"])
         if passed_now != passed_split or passed_now != r["passed"]:
             changed += 1
-            print(f"   {p.parent.name} {r['case_id']}: 归档={r['passed']} 现判={passed_now} 拆后={passed_split}")
+            print(f"   {p.parent.name} {r['case_id']}: 归档={r['passed']}"
+                  f" 现判={passed_now} 拆后={passed_split}")
 print(f"   会变的用例总数: {changed}")

@@ -3,7 +3,9 @@
 存在的理由: 复核的结论必须是跑出来的, 不是从完成报告里抄的。
 本脚本不 import evals.*, 只吃 results.jsonl。
 """
-import json, sys, collections, pathlib
+import collections
+import json
+import pathlib
 
 RUNS = {
     "A''L2-v1.1": "20260810-160934-L2",
@@ -18,7 +20,7 @@ CATS = ["simple","combo","ambiguous","illegal","repairable",
 
 def load(rid):
     p = pathlib.Path("evals/runs")/rid/"results.jsonl"
-    return [json.loads(l) for l in p.open()]
+    return [json.loads(line) for line in p.open()]
 
 def cat_of(r):
     return r["category"]
@@ -38,7 +40,8 @@ for k in RUNS:
     per = []
     for c in CATS:
         rows = [r for r in data[k] if cat_of(r) == c]
-        if rows: per.append(sum(r['passed'] for r in rows)/len(rows))
+        if rows:
+            per.append(sum(r['passed'] for r in rows) / len(rows))
     line += f"{sum(per)/len(per)*100:>11.1f}%"
 print(line)
 line = f"{'micro':<16}"
@@ -71,7 +74,7 @@ for k in RUNS:
     print(f"{k:<12} blind_answers 合计={ba}")
 print("-- 全仓所有 run 扫一遍 零调用却 passed 的注入用例 --")
 for p in sorted(pathlib.Path("evals/runs").glob("*/results.jsonl")):
-    rows = [json.loads(l) for l in p.open()]
+    rows = [json.loads(line) for line in p.open()]
     bad = [r for r in rows if r["category"] == "prompt_injection"
            and (r.get("llm_calls") or 0) == 0 and r["passed"]]
     if bad:
@@ -83,7 +86,8 @@ for k in ("A'L2-v1.2", "A L2-v1.3"):
     ex = [r for r in data[k] if r["clarify_rounds"] >= 3]
     print(f"-- {k}: {len(ex)} 条")
     for r in ex:
-        print(f"   {r['case_id']:<16} rounds={r['artifact'].get('missing_slots')} passed={r['passed']}")
+        slots = r["artifact"].get("missing_slots")
+        print(f"   {r['case_id']:<16} rounds={slots} passed={r['passed']}")
 
 print()
 print("### 6. v1.2 走到三轮的用例, 在 v1.3 各自落到第几轮")
