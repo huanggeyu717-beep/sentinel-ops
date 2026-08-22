@@ -62,11 +62,15 @@ jobs:
       - run: bash scripts/ci/test-eval-smoke.sh
 
   docker:
-    name: 镜像可构建 (面试官一键复现的前提)
+    # W6 从"只 build"改成"起生产形态跑断言" (SPEC-009 第四节): 只 build 拦得住
+    # 快炸, 拦不住 W4 seed CSV 那种慢炸 —— build 全绿、容器起得来, 有人点到才断。
+    # 断言与本机验收是同一份脚本; 起的是 prod 覆盖层, 端口收回/Caddy/SSE/1GB
+    # mem_limit 一起验。
+    name: 生产 compose 起容器跑断言 (镜像可构建且真能跑)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose build api device-sim
+      - run: bash scripts/ci/test-docker.sh
 
   web:
     runs-on: ubuntu-latest

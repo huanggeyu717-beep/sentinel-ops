@@ -1,0 +1,23 @@
+# Caddy 反代 (SPEC-009 第一节覆盖层第 2 件)。
+#
+# 站点地址默认 localhost (本机验收); 开机器那天经环境变量换成真域名即可,
+# 文件本身不用改 —— Caddy 对真域名自动走 ACME 签 Let's Encrypt 真证书,
+# 对 localhost 自动用内部 CA (所以本机验的是"反代 + HTTPS 链路成立",
+# 真证书要等真域名, SPEC-009 第六节第 1 条写明了这条边界)。
+# 80 端口由 Caddy 自动做 HTTP -> HTTPS 跳转, 这就是 80/443 都要开的原因。
+#
+# SSE (/api/agent-tasks/{id}/events) 不需要额外配置: Caddy 的 reverse_proxy
+# 对 Content-Type: text/event-stream 的响应自动逐事件冲刷 (flush_interval -1),
+# 不攒流。**但这句话不许只信文档**: 验收断言"第一个事件 N 秒内到达且流仍开着"
+# (W6 第二段易错点二), CI 的 docker job 每次都数它。
+{$SENTINEL_SITE_ADDRESS:localhost} {
+	# /api/* 剥前缀后进 API 容器; 与 apps/web/nginx.conf 里同源代理的
+	# 路径语义一致 (前端只认相对路径 /api/..., 不硬编码域名)
+	handle_path /api/* {
+		reverse_proxy api:8000
+	}
+	# 其余全部进 web (nginx 托管的静态资源 + SPA 回退)
+	handle {
+		reverse_proxy web:80
+	}
+}

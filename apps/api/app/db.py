@@ -169,27 +169,59 @@ SELECT setval(pg_get_serial_sequence('devices','id'), GREATEST((SELECT max(id) F
 SELECT setval(pg_get_serial_sequence('sensors','id'), GREATEST((SELECT max(id) FROM sensors),1));
 SELECT setval(pg_get_serial_sequence('employees','id'),
               GREATEST((SELECT max(id) FROM employees),1));
--- 登录账号 (SPEC-004)。三条刻意覆盖 users 与 employees 的三种真实关系, 这正是
--- users.employee_id 必须可空的理由 (方案 A): admin 有账号但不是现场员工;
--- Chris/Alex 有账号也各绑一名员工; Bo Wang 是现场员工但没有账号 (只刷卡, 从不登录)。
+-- 登录账号 (SPEC-004)。两条刻意覆盖 users 与 employees 的两种真实关系
+-- (users.employee_id 可空的理由, 方案 A): Chris/Alex 有账号也各绑一名员工;
+-- Bo Wang 是现场员工但没有账号 (只刷卡, 从不登录)。admin (有账号、不是现场员工)
+-- 不在这份 SQL 里 —— 见下面 ADMIN_SEED_SQL: 公开演示库不种它 (SPEC-009 第一节)。
 INSERT INTO users (id, email, password_hash, display_name, employee_id) VALUES
-    (1,'admin@example.com','{_SEED_PASSWORD_HASH}','Admin',NULL),
     (2,'chris@example.com','{_SEED_PASSWORD_HASH}','Chris Li',3),
     (3,'alex@example.com','{_SEED_PASSWORD_HASH}','Alex Chen',1)
     ON CONFLICT (id) DO NOTHING;
 INSERT INTO user_roles (user_id, role_id)
     SELECT v.user_id, r.id
-    FROM (VALUES (1,'admin'),(2,'manager'),(3,'operator')) AS v(user_id, role_name)
+    FROM (VALUES (2,'manager'),(3,'operator')) AS v(user_id, role_name)
     JOIN roles r ON r.name = v.role_name
     ON CONFLICT DO NOTHING;
 SELECT setval(pg_get_serial_sequence('users','id'), GREATEST((SELECT max(id) FROM users),1));
 """
 
+# admin 单独一段: 只有**非**演示库 (开发/测试) 才种。公开演示不给 admin ——
+# 它能做的事 (改角色、改权限) 不是演示内容, 只是攻击面; 演示库需要 admin 时
+# 由 runbook 里一条命令当场生成随机口令创建 (SPEC-009 第一节第 5 条)。
+# 重置脚本重放的是 DEV_SEED_SQL, 不含这一段 —— 每日重置不会把 admin 种回演示库。
+ADMIN_SEED_SQL = f"""
+INSERT INTO users (id, email, password_hash, display_name, employee_id) VALUES
+    (1,'admin@example.com','{_SEED_PASSWORD_HASH}','Admin',NULL)
+    ON CONFLICT (id) DO NOTHING;
+INSERT INTO user_roles (user_id, role_id)
+    SELECT 1, r.id FROM roles r WHERE r.name = 'admin'
+    ON CONFLICT DO NOTHING;
+"""
+
+# 重置脚本的通行证 (SPEC-009 第三节): 只在 SENTINEL_APPLY_DEMO_MARKER=true 时
+# 写入。幂等 —— 单行表, 撞上已有的那一行就什么都不做 (marked_at 保留首次种下的时刻)。
+DEMO_MARKER_SQL = """
+INSERT INTO demo_marker (note)
+VALUES ('public demo: seeded by API startup (SENTINEL_APPLY_DEMO_MARKER=true)')
+ON CONFLICT (only_row) DO NOTHING;
+"""
+
 
 async def apply_dev_seed() -> None:
-    """写入演示用门店/设备/传感器/员工。幂等, 生产环境用 SENTINEL_APPLY_DEV_SEED=false 关闭。"""
+    """写入演示用门店/设备/传感器/员工/账号。幂等, SENTINEL_APPLY_DEV_SEED=false 关闭。
+
+    SENTINEL_APPLY_DEMO_MARKER (默认 false) 切换两种形态:
+    - false (开发/测试): 照旧种 admin, **不写** demo_marker —— 通行证长到开发库里,
+      重置脚本的护栏就对开发库也放行了 (W6 第二段易错点三);
+    - true (公开演示): 写入通行证那一行, **不种 admin** (SPEC-009 第一节)。
+    """
+    cfg = settings()
     conn = await asyncpg.connect(_dsn())
     try:
         await conn.execute(DEV_SEED_SQL)
+        if cfg.apply_demo_marker:
+            await conn.execute(DEMO_MARKER_SQL)
+        else:
+            await conn.execute(ADMIN_SEED_SQL)
     finally:
         await conn.close()
