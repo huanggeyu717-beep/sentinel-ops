@@ -35,6 +35,12 @@ class ApiProcess:
     def start(self) -> None:
         env = {
             **os.environ,
+            # W6 花钱护栏 (SPEC-009): 生产默认 ¥3/天、每账号 3 条, 护的是公开演示里的
+            # 匿名访客; 评测是内部测量设施, 十条用例共用一个账号, 跑到第 4 条就 429。
+            # 它自己的成本护栏在 runner 侧 (SPEC-007 第六节), 所以这里放开是安全的。
+            # 默认值不动 —— 配错的部署不能因此没有护栏。
+            "SENTINEL_LLM_DAILY_BUDGET_CNY": "100000",
+            "SENTINEL_AGENT_USER_DAILY_TASKS": "100000",
             **self._overrides,
             # 本地包不装 venv (pytest.ini 同一份路径), 子进程要自带
             "PYTHONPATH": os.pathsep.join(
