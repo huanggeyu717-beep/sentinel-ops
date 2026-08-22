@@ -39,4 +39,6 @@ section() {
 #
 # 注意 scripts/dev 走**默认档**, 不进 mypy.ini 的严格档白名单: 那些是探针,
 # 强制标注收益低、噪音大 (ADR-005 对测试代码的同一条理由)。
-LINT_TARGETS=(packages apps/api apps/device-sim evals scripts/dev)
+# scripts/ops 是 W6 加的 (每日重置脚本): 它是一段会删数据的代码, 和 scripts/dev
+# 的花钱脚本同理 —— 最该被看一眼的地方不能没人看。走 mypy 默认档 (同 scripts/dev)。
+LINT_TARGETS=(packages apps/api apps/device-sim evals scripts/dev scripts/ops)

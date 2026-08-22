@@ -38,7 +38,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from ..config import settings
 from ..db import session_factory
-from ..services import agent_prompts, agent_runtime, agent_service
+from ..services import agent_prompts, agent_runtime, agent_service, budget_service
 from ..services.auth_service import PERM_POLICY_DRAFT, PERM_READ, AuthUser
 from ..services.llm_client import LLMClient, build_llm_client
 from .auth import require_permission
@@ -177,6 +177,10 @@ def _service_errors() -> Iterator[None]:
             status_code=409,
             detail=f"任务当前状态 {e.current_status} 不能回答 (可能已被回答或已结束)",
         ) from None
+    # 三种 429 共用一个状态码, 但用户要做的事完全不同 (SPEC-009 第二节):
+    # 系统忙 = 等几秒重试; 额度/配额用完 = 今天到此为止。错误码放
+    # X-Error-Code 头 (机器读), detail 保持人话字符串 —— 前端 ApiError 直接
+    # 把 detail 当文案显示, 换成结构体它会渲染成 [object Object]。
     except agent_runtime.CapacityExceeded:
         raise HTTPException(
             status_code=429,
@@ -184,6 +188,23 @@ def _service_errors() -> Iterator[None]:
                 f"同时在跑的 Agent 任务已达上界 "
                 f"({settings().agent_max_concurrent_tasks} 条), 请等一条跑完再提交"
             ),
+            headers={"X-Error-Code": "capacity_exceeded"},
+        ) from None
+    except budget_service.UserQuotaExhausted:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"这个账号今天的任务数已用完 "
+                f"(每个账号每天 {settings().agent_user_daily_tasks} 条), "
+                f"明天再来, 或换一个演示账号"
+            ),
+            headers={"X-Error-Code": "user_quota_exhausted"},
+        ) from None
+    except budget_service.DailyBudgetExhausted:
+        raise HTTPException(
+            status_code=429,
+            detail="今天的模型体验额度已用完 (全站共享的日预算), 明天再来试",
+            headers={"X-Error-Code": "daily_budget_exhausted"},
         ) from None
 
 
@@ -238,6 +259,12 @@ async def create_task(
                 target_policy_id=payload.target_policy_id,
                 lease_timeout_seconds=settings().agent_lease_timeout_seconds,
             )
+            if created["created"]:
+                # 钱与配额的预扣在**同一个事务里** (SPEC-009 第二节): CHECK 拒绝
+                # 时抛异常, 任务行连同预扣一起回滚, 下面的 except 顺手退回槽位。
+                # 去重命中不扣 —— 用户什么都没多得到。
+                with _service_errors():
+                    await budget_service.reserve_task_budget(session, user_id=user.id)
     except BaseException:
         agent_runtime.release_task_slot()
         raise
@@ -251,7 +278,9 @@ async def create_task(
             suspected_interrupted=created["suspected_interrupted"],
         )
     # 事务已提交, 行可见, 才能 spawn (spawn 内部把预留转正)
-    agent_runtime.spawn_task(created["task_id"], llm, factory)
+    round_task = agent_runtime.spawn_task(created["task_id"], llm, factory)
+    # 任务不再发调用时按 ai_usage 合计回补预扣差额 (独立事务, 失败只记日志)
+    budget_service.refund_when_done(round_task, created["task_id"], factory)
     response.status_code = 201
     return TaskCreated(task_id=created["task_id"], created=True, status="running",
                        stage="parsing")
@@ -308,7 +337,10 @@ async def reply(
     except BaseException:
         agent_runtime.release_task_slot()
         raise
-    agent_runtime.spawn_task(task_id, llm, factory)
+    round_task = agent_runtime.spawn_task(task_id, llm, factory)
+    # 恢复的轮次花的还是建任务时那笔预扣 (最坏情况按 12 次总调用估的, 跨轮),
+    # 这里不再扣, 只在任务真正不再发调用时回补
+    budget_service.refund_when_done(round_task, task_id, factory)
     return ReplyResult(task_id=task_id, answered_seq=answered["answered_seq"])
 
 

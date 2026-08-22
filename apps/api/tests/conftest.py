@@ -32,6 +32,11 @@ os.environ["SENTINEL_ENGINE_TICK_SECONDS"] = "3600"
 # W4 agent 打卡/清扫循环同理: 5 秒一轮的清扫事务 (先锁 agent_tasks 再读
 # agent_clarifications) 会与夹具的反向 TRUNCATE 偶发死锁; 打卡与清扫一律由用例显式调。
 os.environ["SENTINEL_AGENT_HEARTBEAT_SECONDS"] = "3600"
+# W6 花钱护栏 (SPEC-009): 生产默认是 ¥3/天、每账号 5 条 —— 按用例数一摊,
+# 既有测试一个会话建的任务远超这两个数, 不放开会被护栏随机击穿。
+# 护栏本身的用例在 test_budget_* 里按用例 monkeypatch 回小值来测。
+os.environ["SENTINEL_LLM_DAILY_BUDGET_CNY"] = "100000"
+os.environ["SENTINEL_AGENT_USER_DAILY_TASKS"] = "100000"
 
 DSN = TEST_URL.replace("+asyncpg", "")
 TELEMETRY_TABLES = [
@@ -40,6 +45,8 @@ TELEMETRY_TABLES = [
     "incident_events", "incidents", "audit_log",
     # W3 策略生命周期 (SPEC-006): 外键相互引用的表必须同一条 TRUNCATE 一起清
     "policy_runs", "policy_publications", "approvals", "policy_versions", "policies",
+    # W6 花钱护栏 (SPEC-009): 台账按天累加, 不清的话配额会跨用例攒到打满
+    "llm_spend_daily", "user_task_quota_daily", "demo_marker",
 ]
 
 

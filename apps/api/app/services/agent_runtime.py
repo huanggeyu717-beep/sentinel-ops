@@ -46,7 +46,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import settings
-from . import agent_prompts, agent_service, agent_tools, policy_service
+from . import agent_prompts, agent_service, agent_tools, budget_service, policy_service
 from .agent_tools import InvalidToolArguments, ToolContext, ToolTimeout
 from .llm_client import (
     LLMCallTimeout,
@@ -877,7 +877,7 @@ async def maintenance_loop() -> None:
     - 打卡只打本进程 (RUNNER_ID) 名下 running 的任务;
     - 清扫: 失联判死 (heartbeat 时间差, 阈值/间隔的比例关系见 config.py 注释) +
       clarifying 超过生存期判死; 都是幂等条件更新, 多实例重复跑无害;
-    - 判死任务的草稿标 discarded (不删);
+    - 判死任务的草稿标 discarded (不删), 预扣结算回台账 (见 sweep_once);
     - 单轮失败只记日志不退出; 关停由 lifespan cancel, 先 sleep 后干活保证取消点
       永远可达, 测试不挂住 (形状照抄 policy_runtime.tick_loop)。
     """
@@ -889,18 +889,31 @@ async def maintenance_loop() -> None:
         try:
             async with factory() as session, session.begin():
                 await agent_service.beat(session, RUNNER_ID)
-                reaped = await agent_service.reap(
-                    session,
-                    lease_timeout_seconds=settings().agent_lease_timeout_seconds,
-                    task_ttl_hours=settings().agent_task_ttl_hours,
-                )
-                for r in reaped:
-                    draft = await agent_service.find_task_draft_version(
-                        session, r["task_id"]
-                    )
-                    if draft is not None:
-                        await policy_service.discard_version(session, draft)
+                await sweep_once(session)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("agent 打卡/清扫循环单轮失败, 下一轮重试")
+
+
+async def sweep_once(session: AsyncSession) -> list[dict[str, Any]]:
+    """清扫一轮: 判死 + 草稿标弃 + **预扣结算**, 同一个事务。
+
+    结算这一步是 SPEC-009 第二节末尾那句"任何把任务写进终态的地方都要结算
+    一次"的清扫侧: 失联判死与 clarifying 超时判死都不经过任何轮次的收尾回调,
+    只在轮次收尾回补的话, 被遗弃的澄清任务的预扣当天再也回不来。结算是幂等的
+    (budget_service 的 hold_refunded_at 钥匙), 与轮次收尾撞上也只减一次。
+    从 maintenance_loop 提出来成独立函数, 是让测试能直接调**循环真正跑的这段
+    代码** —— 只写在循环体里的话, "清扫会结算"没有任何测试守得住。
+    """
+    reaped = await agent_service.reap(
+        session,
+        lease_timeout_seconds=settings().agent_lease_timeout_seconds,
+        task_ttl_hours=settings().agent_task_ttl_hours,
+    )
+    for r in reaped:
+        draft = await agent_service.find_task_draft_version(session, r["task_id"])
+        if draft is not None:
+            await policy_service.discard_version(session, draft)
+        await budget_service.refund_task_hold(session, r["task_id"])
+    return reaped

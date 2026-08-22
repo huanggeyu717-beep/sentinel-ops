@@ -19,7 +19,14 @@ class Settings(BaseSettings):
     trust_proxy_headers: bool = False
 
     # --- W1 运行时行为 ---
-    apply_dev_seed: bool = True          # 启动时写入演示门店/传感器/员工, 生产置 false
+    apply_dev_seed: bool = True          # 启动时写入演示门店/传感器/员工/账号
+    # 公开演示库开关 (SPEC-009 第三节 + W6 第二段易错点三): true 时种子顺手做两件事
+    # —— 写入 demo_marker 通行证那一行 (重置脚本只认它), 且**不种 admin 账号**
+    # (admin 能做的事不是演示内容, 只是攻击面; 需要时按 runbook 一条命令现造)。
+    # 刻意是显式开关而不是 environment != development 之类的间接判据: 判据间接
+    # 一层, 重置护栏就对一切非 development 库放行。只在生产覆盖层里打开;
+    # 开发与测试恒 false —— 通行证长到开发库里, 删数据的脚本对它也放行。
+    apply_demo_marker: bool = False
     heartbeat_timeout_seconds: int = 60  # 沿用 legacy status-api Lambda 的在线判定语义
     default_wet_threshold: int = 500     # 事件未带 state 时, 由 value 推导 wet 的兜底阈值
 
@@ -63,6 +70,18 @@ class Settings(BaseSettings):
     agent_max_concurrent_tasks: int = 4
     # 修复次数上限 2 是每轮澄清后重置的 (与 max_llm_calls 相反, SPEC-002 第三节
     # 写死的一对), 不进配置 —— 它是状态机语义的一部分, 见 agent_runtime。
+
+    # --- W6 花钱护栏 (SPEC-009 第二节) ---
+    # 三个数一起读: 预扣 0.60 = agent_max_llm_calls (12) × 保守单次估值 ¥0.05;
+    # ¥3/天 ≈ 20-40 条真实体验 (W5 实测一条策略任务中位 ¥0.05-0.17)。
+    # 这里只是数字的来源, 护栏本体是 llm_spend_daily 的 CHECK —— 超了那条
+    # UPDATE 物理上写不进去 (budget_service 模块注释)。
+    llm_daily_budget_cny: float = 3.0    # 全站日预算, llm_spend_daily.limit_cny 的来源
+    agent_task_hold_cny: float = 0.60    # 单任务预扣 (最坏情况), 跑完按 ai_usage 合计回补
+    # 单账号每日任务数上限。原本是 5, 复核改 3 (SPEC-009 第二节, 2026-08-22):
+    # 5 × 0.60 = 3.00 恰好等于全站日预算 —— 一个账号用满配额就把全站额度占光,
+    # "挡一人占光额度"这一层等于不存在; 3 × 0.60 = 1.80, 单账号至多占 60%。
+    agent_user_daily_tasks: int = 3
 
     # --- LLM (W4 起使用) ---
     llm_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"  # 火山方舟, OpenAI 兼容
