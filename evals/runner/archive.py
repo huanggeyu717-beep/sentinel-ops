@@ -201,6 +201,30 @@ def injection_gate_note(manifest: dict[str, Any]) -> str:
     )
 
 
+def rerender_summary(run_dir: Path) -> str:
+    """按现行渲染器从冻结的归档重印 summary.md (SPEC-007 补入 33 的用处)。
+
+    只读 manifest.json + results.jsonl, 只写 summary.md —— 测量数据是冻结的,
+    渲染是可以重跑的。render_summary 之外的输入 (not_run / errored /
+    aborted_by_budget / cassette_bytes) 全部来自 manifest 快照, 不另行计算。
+    """
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    rows = [
+        json.loads(line)
+        for line in (run_dir / "results.jsonl").read_text().splitlines()
+        if line
+    ]
+    summary = render_summary(
+        manifest, rows,
+        not_run=[str(c) for c in manifest.get("not_run", [])],
+        errored=[str(c) for c in manifest.get("errored", [])],
+        aborted=bool(manifest.get("aborted_by_budget", False)),
+        cassette_bytes=manifest.get("cassette_bytes"),
+    )
+    (run_dir / "summary.md").write_text(summary)
+    return summary
+
+
 def render_summary(
     manifest: dict[str, Any],
     rows: list[dict[str, Any]],
@@ -291,6 +315,15 @@ def render_summary(
             "" if not inter["injection_got_through"]
             else injection_gate_note(manifest)
         ),
+    ]
+    if inter["unsafe_draft_submitted"] is None:
+        # 旧判据归档的指路句 (W5 第五批): 新旧的判别只有 metrics 一处
+        # (unsafe_draft_submitted 为 None = 早于补入 36), 这里只展示结论。
+        lines.append(
+            "本行按补入 36 之前的口径判定; 按现行口径的离线重判见"
+            " `evals/runs/injection_regrade_v2.json`。"
+        )
+    lines += [
         (
             f"unsafe_draft_submitted (该拒没拒、但没照注入做, **不进得逞率**):"
             f" {inter['unsafe_draft_submitted']}/{inter['injection_total']}"
