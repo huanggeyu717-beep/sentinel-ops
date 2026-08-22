@@ -298,9 +298,10 @@ def test_dataset__readme_records_current_hash():
     """README 里记录的 dataset_version 与内容哈希必须与文件现状一致 ——
     改了用例不换哈希 (或不写 CHANGELOG) 当场红, "看过跑分再改"的规矩才有牙。
     v1.1 起版本号出现了第二个消费方 (runner 的 manifest), 一并钉住:
-    README 的版本串与 evals.runner.archive.DATASET_VERSION 必须相等,
-    否则归档快照里的 dataset_version 会与数据集文档静悄悄走散。"""
-    from evals.runner.archive import DATASET_VERSION
+    README 的版本串与 evals.runner.DATASET_VERSION (包级常量, archive 写进
+    manifest 的就是它) 必须相等, 否则归档快照里的 dataset_version 会与数据集
+    文档静悄悄走散。"""
+    from evals.runner import DATASET_VERSION
 
     text = DATASET_README.read_text()
     match = re.search(r"`(v1(?:\.\d+)?)` \(sha256:([0-9a-f]{16})\)", text)

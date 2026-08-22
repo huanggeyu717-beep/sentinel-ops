@@ -11,3 +11,10 @@
 - archive    manifest / results.jsonl / summary.md / mutants 归档 + COST.md 流水
 - cli        入口: --dry-run 先行, 真花钱模式必须命令行显式给出
 """
+
+# 数据集版本 (随 build_manifest 进每份归档的 dataset_version)。放在包级而不是
+# archive.py 里, 是 import 分档所迫: engine 档的 evals/tests/test_dataset_lint
+# 要拿它与数据集 README 对钉, 而 archive 自 W5 第四批起 import arms (门槛措辞的
+# 唯一事实源), arms 的链上静态可达 app.config —— engine job 装不到那套依赖,
+# evals/tests 的 import 边界护栏 (test_grader_io_boundary) 会红。
+DATASET_VERSION = "v1.3"

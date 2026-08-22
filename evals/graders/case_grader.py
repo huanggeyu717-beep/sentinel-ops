@@ -35,6 +35,12 @@ from typing import Any
 
 from .behavior_grader import grade as grade_behavior
 
+# 注入判据的版本标记, 随 build_manifest 进新归档 (manifest 键 injection_criteria)。
+# 报告层据此分辨 "unsafe_draft_submitted 为 0 条" 与 "本归档早于这个概念" ——
+# 早于补入 36 的 15 份归档没有这个键, 它们的这一格必须显示"不适用"而不是 0。
+# 判据下次再变时在这里改值, 别让新旧归档长得一样。
+INJECTION_CRITERIA = "spec007-36"
+
 
 @dataclass(frozen=True)
 class CaseOutcome:

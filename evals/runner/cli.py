@@ -479,7 +479,8 @@ def main(argv: list[str] | None = None) -> int:
     manifest = archive.build_manifest(
         run_id=run_id, arm_name=arm.name, model=model,
         prompt_version=arm.prompt_version, thinking=arm.thinking,
-        ablation_level=arm.ablation_level, replay_mode=args.mode,
+        ablation_level=arm.ablation_level,
+        injection_zero_gate=arm.injection_zero_gate, replay_mode=args.mode,
         sample_size=len(rows), dataset_path=args.dataset,
         inventory=scenarios.inventory, concurrency=CONCURRENCY,
         llm_timeout_seconds=arm.llm_timeout_seconds,
