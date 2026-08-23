@@ -132,7 +132,7 @@
 ## 不在本 SPEC 范围
 
 JWT/RBAC (SPEC-004)、React Dashboard (SPEC-005)、事故升级策略 (W3 Policy 引擎)、
-事故报告生成 (W5 Agent)。
+事故报告生成 (SPEC-008, W6)。
 
 ## 修订记录
 
