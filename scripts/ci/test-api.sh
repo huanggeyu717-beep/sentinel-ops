@@ -6,6 +6,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 ci_pip_install -r apps/api/requirements.txt -r requirements-dev.txt
 ci_pip_install -e packages/policy_engine
 ci_pip_install -e packages/scenario
+require_modules_outside_ci asyncpg fastapi pytest
 
 # evals/runner/tests 也归这一档 (W5): 那两个文件 import httpx / asyncpg, 而这个 job
 # 本来就装了 apps/api 全套依赖。它们不连库 (用 MockTransport 与手造数据),

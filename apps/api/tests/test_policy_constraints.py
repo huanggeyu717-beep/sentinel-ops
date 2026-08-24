@@ -142,11 +142,13 @@ def test_second_pending_approval__unique_index_rejects(client):
 
 # ===== 验收 20: 迁移 0007 降一步再升回, 结构与数据一致 =====
 
-def test_migration_0007__downgrade_then_upgrade_roundtrip(client):
+def test_migration_0007__downgrade_then_upgrade_roundtrip(client, preserve_users):
     """ADR-006 的既定做法。留一行草稿版本验证存活数据不受损。
 
-    注意: downgrade 会删掉 0007 种下的 dana/viewer, 升回时按新的序列 id 重建 ——
-    邮箱不变, 按邮箱找人的用例不受影响 (本套测试不缓存这两个账号的 token)。
+    downgrade 会删掉 0007 种下的 dana/viewer, 升回时按序列重插 —— 邮箱不变,
+    id 会变, 而 session 级的 auth_headers 缓存的 token 里存的是 id。所以整个
+    往返包在 preserve_users 里, 结束后按原 id 复原这两行 (机制与"为什么只在
+    全新库上炸"见 conftest.preserve_users 的 docstring)。
     """
     from alembic import command
 
@@ -157,30 +159,41 @@ def test_migration_0007__downgrade_then_upgrade_roundtrip(client):
 
     policy_id, version_id = db(seed)
 
+    async def seed_user_ids(conn):
+        return {
+            r["email"]: r["id"] for r in await conn.fetch(
+                "SELECT email, id FROM users "
+                "WHERE email IN ('dana@example.com', 'viewer@example.com')"
+            )
+        }
+
+    ids_before = db(seed_user_ids)
+
     cfg = alembic_config()
-    # 显式降到 0007 的上一版, 不用相对的 "-1" —— 那只在 0007 自己是 head 时成立,
-    # 0008 落地后 "-1" 降的是别人 (W4 第一段发现并修正)
-    command.downgrade(cfg, "0006_positions")
+    with preserve_users():
+        # 显式降到 0007 的上一版, 不用相对的 "-1" —— 那只在 0007 自己是 head 时
+        # 成立, 0008 落地后 "-1" 降的是别人 (W4 第一段发现并修正)
+        command.downgrade(cfg, "0006_positions")
 
-    async def check_downgraded(conn):
-        assert not await conn.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
-            "WHERE table_name = 'policy_publications')"
-        )
-        # 原样还回去: enabled 列回来了, status CHECK 回到含 rolled_back 的旧集合
-        assert await conn.fetchval(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = 'policies' AND column_name = 'enabled')"
-        )
-        old_check = await conn.fetchval(
-            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-            "WHERE conrelid = 'policy_versions'::regclass AND contype = 'c'"
-        )
-        assert "rolled_back" in old_check and "awaiting_approval" not in old_check
+        async def check_downgraded(conn):
+            assert not await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                "WHERE table_name = 'policy_publications')"
+            )
+            # 原样还回去: enabled 列回来了, status CHECK 回到含 rolled_back 的旧集合
+            assert await conn.fetchval(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'policies' AND column_name = 'enabled')"
+            )
+            old_check = await conn.fetchval(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid = 'policy_versions'::regclass AND contype = 'c'"
+            )
+            assert "rolled_back" in old_check and "awaiting_approval" not in old_check
 
-    db(check_downgraded)
+        db(check_downgraded)
 
-    command.upgrade(cfg, "head")
+        command.upgrade(cfg, "head")
 
     async def check_upgraded(conn):
         # 结构还在
@@ -213,6 +226,73 @@ def test_migration_0007__downgrade_then_upgrade_roundtrip(client):
             )
 
     db(check_upgraded)
+    # 且 id 与往返前逐一相同 (preserve_users 复原的结果) —— id 变了, session 级
+    # 缓存里已签发的 token 就全是悬空引用
+    assert db(seed_user_ids) == ids_before
+
+
+# ===== 回归: 0007 往返不许作废已签发的 token (CI 全新库 viewer 401) =====
+
+def test_cached_token_survives_0007_roundtrip__with_higher_id_user_present(
+    client, viewer_headers, preserve_users
+):
+    """把 preserve_users 的复原逻辑回退掉, 本用例必须红 —— 且在常驻库上也红。
+
+    上一条用例的 id 断言只在全新库上抓得到这个缺陷: 常驻库上 dana/viewer 恰好
+    已收敛到序列最大值, 删掉重插会落回原 id, "没复原"与"复原了"长得一模一样。
+    这里先插一个高位 id 的用户把那个巧合破坏掉, 再走同一段往返, 断言三件事:
+    dana/viewer 的 id 不变、往返前签发的 viewer token 仍然能过 /auth/me、
+    **而且它还带着 viewer 角色** —— 第二件正是 CI 上 test_reports_http 401 的
+    受害现场 (机制见 conftest.preserve_users)。
+
+    第三件是 2026-08-24 评审补的, 少了它这条用例分不清两种世界 (变异 P3):
+    复原了行、没复原 user_roles 时, viewer 回来了、id 也对、`/auth/me` 照样
+    200 (那个端点不要求任何权限点), **但他一个角色都没有**。而下游那条本该
+    抓住这件事的用例 `test_report_permissions__viewer_reads_but_cannot_write`
+    期望的是 **403** —— 一个没有角色的用户拿到的**也是 403**。
+    两种世界产出同一个状态码, 判据分不开它们, 于是"权限正确地被拒绝"与
+    "这个人的权限没了"长成一个样。**这是本项目那条主线在角色表上的又一次现形。**
+    权限门那一侧要断言的是**能做成一件需要权限的事**, 不是"还能登录"。
+    """
+    from alembic import command
+
+    from app.db import alembic_config
+
+    async def add_high_id_user(conn):
+        return await conn.fetchval(
+            "INSERT INTO users (email, password_hash, display_name) "
+            "VALUES ('scratch-cached-token@example.com', 'x', 'Scratch') RETURNING id"
+        )
+
+    async def seed_user_ids(conn):
+        return {
+            r["email"]: r["id"] for r in await conn.fetch(
+                "SELECT email, id FROM users "
+                "WHERE email IN ('dana@example.com', 'viewer@example.com')"
+            )
+        }
+
+    scratch_id = db(add_high_id_user)
+    try:
+        ids_before = db(seed_user_ids)
+        # 前提自检: 巧合确实被破坏了 (走序列插的行 id 必须比两个种子账号都大)
+        assert scratch_id > max(ids_before.values())
+
+        cfg = alembic_config()
+        with preserve_users():
+            command.downgrade(cfg, "0006_positions")
+            command.upgrade(cfg, "head")
+
+        assert db(seed_user_ids) == ids_before
+        # 还认得这个人 (/auth/me 不要求权限点)
+        assert client.get("/auth/me", headers=viewer_headers).status_code == 200
+        # 而且角色还在: /incidents 要 PERM_READ, 角色没复原的话这里 403 (变异 P3)
+        assert client.get("/incidents", headers=viewer_headers).status_code == 200
+    finally:
+        async def cleanup(conn):
+            await conn.execute("DELETE FROM users WHERE id = $1", scratch_id)
+
+        db(cleanup)
 
 
 # ===== 验收 13: 删干净的证明 (范围口径照抄 SPEC-004 的旧占位请求头零残留断言) =====

@@ -21,6 +21,21 @@ section() {
   echo "==> $*"
 }
 
+# 本机前置检查: 不在 CI 且关键模块 import 不到时, 打印一句人话再退出。
+# 不加这道闸, 没进 venv 直接跑会得到 "ModuleNotFoundError: No module named
+# 'asyncpg'" —— 看起来像代码坏了, 其实是环境没配好, 与 pytest.ini 顶部注释
+# 警告过的坑同形, 只是换了个模块名。CI 上跳过 (依赖由 ci_pip_install 现装)。
+require_modules_outside_ci() {
+  if [ "${CI:-}" = "true" ]; then return 0; fi
+  local mod
+  for mod in "$@"; do
+    if ! python -c "import ${mod}" >/dev/null 2>&1; then
+      echo "本机跑请先 source .venv/bin/activate (当前 python import 不到 ${mod})" >&2
+      exit 1
+    fi
+  done
+}
+
 # ===== 静态检查目标: 单一事实源 =====
 #
 # ruff、mypy、make lint-fix 以前各写各的清单。`make lint` 调的是 lint.sh 所以与 CI

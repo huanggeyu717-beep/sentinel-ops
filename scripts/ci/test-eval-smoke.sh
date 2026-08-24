@@ -15,6 +15,7 @@ SMOKE_DIR=evals/cassettes/smoke
 
 # api job 里本脚本排在 test-api.sh 之后, 依赖已经装好; 单独跑时这行兜底
 ci_pip_install -r apps/api/requirements.txt -r requirements-dev.txt
+require_modules_outside_ci asyncpg httpx
 
 # 评测库与 API 库分开 (SPEC-007 第七节)。CI 上指向同一个 Postgres 服务的另一个库;
 # 本机不设时走 config 默认值 (5433 上的 sentinel_eval)。

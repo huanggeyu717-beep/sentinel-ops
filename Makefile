@@ -1,4 +1,4 @@
-.PHONY: help up up-bg down logs sim sim-basic replay test test-api test-unit lint lint-fix lint-version ci-repro ci-lint-repro ci-unit-repro dev-tools migrate migrate-status migrate-down migrate-new evals eval-db-reset psql reset
+.PHONY: help up up-bg down logs sim sim-basic replay test test-api test-unit lint lint-fix lint-version ci-repro ci-lint-repro ci-unit-repro ci-api-repro dev-tools migrate migrate-status migrate-down migrate-new evals eval-db-reset psql reset
 
 help:           ## 列出所有命令
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -56,6 +56,11 @@ ci-lint-repro:  ## 只复现 lint job (ruff + mypy, 装全量依赖)
 
 ci-unit-repro:  ## 只复现 engine job (纯函数档, 依赖故意贫瘠 —— 坑都在这里)
 	bash scripts/dev/ci-env-repro.sh unit
+
+# 常驻库跑绿证明不了 CI 会绿: CI 每次是全新库, id 收敛类缺陷只在全新库上现形
+# (viewer401 那次红)。这个目标先 DROP sentinel_test 再跑与 CI 同一份 test-api.sh。
+ci-api-repro:   ## 复现 CI 的 api job (先 DROP 常驻的 sentinel_test, 与 CI 同条件)
+	bash scripts/dev/ci-api-repro.sh
 
 dev-tools:      ## 安装/对齐本机工具链版本 (macOS 系统 Python 需要 --break-system-packages, 已自动兜底)
 	pip3 install -r requirements-dev.txt \

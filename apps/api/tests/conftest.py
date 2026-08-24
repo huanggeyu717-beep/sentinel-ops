@@ -141,6 +141,84 @@ def viewer_headers(client, auth_headers):
     return auth_headers(email)
 
 
+@pytest.fixture
+def preserve_users():
+    """给会删/重插 users 行的测试用 (目前只有迁移 0007 的往返): 进入时快照
+    users / user_roles / id 序列, 退出时把 "email 还在但 id 变了" 的行按原 id
+    重建, 序列拨回快照值。
+
+    为什么必须保住 **id** 而不只保证 "人还在": auth_headers 是 session 级缓存,
+    token 里存的是数字 id (sub)。0007 往返把 dana/viewer 删掉按序列重插,
+    邮箱没变、id 变了, 已签发的 token 全部变成悬空引用 —— 之后所有复用这份
+    缓存的用例 401。全新库上 viewer 的 id (102) 不是最大值 (后插的 bo=104),
+    重插必换号; 常驻库上 viewer 恰好已收敛到最大 id, 重插回到原号 ——
+    这就是 "本机常驻库全绿、CI 全新库红" 的全部机制
+    (探针实录: scripts/dev/probe_viewer401.py, 结论见
+    docs/ai-development/W6-CI修复-viewer401-完成报告.md)。
+
+    修在责任方: 谁改了库, 谁负责把世界还原成拿快照时的样子; 不降 viewer_headers
+    的作用域 —— 那会让每条用例多付一次 bcrypt, 且只护住 viewer 一个账号。
+    """
+    from contextlib import contextmanager
+
+    async def snapshot(conn):
+        users = await conn.fetch(
+            "SELECT id, email, password_hash, display_name, created_at, employee_id "
+            "FROM users ORDER BY id"
+        )
+        roles = await conn.fetch("SELECT user_id, role_id FROM user_roles")
+        seq = await conn.fetchrow("SELECT last_value, is_called FROM users_id_seq")
+        return users, roles, seq
+
+    async def restore(conn, snap) -> None:
+        users, roles, seq = snap
+        for u in users:
+            current_id = await conn.fetchval(
+                "SELECT id FROM users WHERE email = $1", u["email"]
+            )
+            if current_id == u["id"]:
+                continue
+            if current_id is not None:
+                await conn.execute("DELETE FROM user_roles WHERE user_id = $1", current_id)
+                await conn.execute("DELETE FROM users WHERE id = $1", current_id)
+            await conn.execute(
+                "INSERT INTO users (id, email, password_hash, display_name, "
+                "created_at, employee_id) VALUES ($1, $2, $3, $4, $5, $6)",
+                u["id"], u["email"], u["password_hash"], u["display_name"],
+                u["created_at"], u["employee_id"],
+            )
+            for r in roles:
+                if r["user_id"] == u["id"]:
+                    await conn.execute(
+                        "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) "
+                        "ON CONFLICT DO NOTHING", u["id"], r["role_id"],
+                    )
+        await conn.execute(
+            "SELECT setval(pg_get_serial_sequence('users','id'), $1, $2)",
+            seq["last_value"], seq["is_called"],
+        )
+
+    def run(coro_fn, *args):
+        async def go():
+            conn = await asyncpg.connect(DSN)
+            try:
+                return await coro_fn(conn, *args)
+            finally:
+                await conn.close()
+
+        return asyncio.run(go())
+
+    @contextmanager
+    def cm():
+        snap = run(snapshot)
+        try:
+            yield
+        finally:
+            run(restore, snap)
+
+    return cm
+
+
 @pytest.fixture(autouse=True)
 def clean_telemetry(client):
     async def go() -> None:
