@@ -31,8 +31,11 @@ _SETVAL = '''        await conn.execute(
 
 MUTANTS = [
     ("P1 复原整段变成空操作 (实现者已验过, 作对照)",
-     "    async def restore(conn, snap) -> None:\n        users, roles, seq = snap",
-     "    async def restore(conn, snap) -> None:\n        return\n        users, roles, seq = snap"),
+     "    async def restore(conn, snap) -> None:\n"
+     "        users, roles, seq = snap",
+     "    async def restore(conn, snap) -> None:\n"
+     "        return\n"
+     "        users, roles, seq = snap"),
 
     ("P2 **只跳过序列还原** (行复原了, 序列留在高位)",
      _SETVAL,
