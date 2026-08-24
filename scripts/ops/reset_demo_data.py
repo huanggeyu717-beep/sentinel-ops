@@ -43,6 +43,9 @@ READINGS_CSV = REPO_ROOT / "apps" / "device-sim" / "seed" / "waterlevel_readings
 # 同一条 TRUNCATE。RESTART IDENTITY 让演示里的 id 每天从小数字起, 顺眼。
 DEMO_TABLES = (
     "waterlevel_readings", "rfid_scans", "device_heartbeats", "sensorstate",
+    # incident_reports 引用 incidents 与 agent_tasks, 不同列会让整条 TRUNCATE 报错;
+    # 报告本身也是访客生成的数据, 语义上就该清 (W6 SPEC-008)
+    "incident_reports",
     "incident_events", "incidents", "audit_log",
     "policy_runs", "policy_publications", "approvals",
     "policy_versions", "policies",

@@ -16,6 +16,8 @@ import pytest
 # 所以这两张也一并列入 (conftest 的 clean_telemetry 本来每个用例也清它们)。
 AGENT_TABLES = (
     "agent_steps", "agent_clarifications", "ai_usage",
+    # incident_reports.task_id -> agent_tasks (W6 SPEC-008), 不列会让整条 TRUNCATE 报错
+    "incident_reports",
     "agent_tasks", "approvals", "policy_publications",
 )
 

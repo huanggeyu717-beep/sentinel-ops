@@ -42,7 +42,9 @@ DSN = TEST_URL.replace("+asyncpg", "")
 TELEMETRY_TABLES = [
     "waterlevel_readings", "rfid_scans", "device_heartbeats", "sensorstate",
     # W2 事故生命周期: incident_events 引用 incidents, 同一条 TRUNCATE 一起清
-    "incident_events", "incidents", "audit_log",
+    # (W6 SPEC-008: incident_reports 也引用 incidents, 不列进来整条 TRUNCATE 会报
+    #  "cannot truncate a table referenced in a foreign key constraint")
+    "incident_events", "incidents", "incident_reports", "audit_log",
     # W3 策略生命周期 (SPEC-006): 外键相互引用的表必须同一条 TRUNCATE 一起清
     "policy_runs", "policy_publications", "approvals", "policy_versions", "policies",
     # W6 花钱护栏 (SPEC-009): 台账按天累加, 不清的话配额会跨用例攒到打满
