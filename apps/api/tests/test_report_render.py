@@ -238,6 +238,31 @@ def test_fact_pack_durations__formatted_chinese():
     assert fact_by_id(facts, "onsite_duration").text == "1 小时"
 
 
+def test_fact_pack_durations__seconds_not_dropped_under_an_hour():
+    """三条时长按定义相加 (响应 + 到场 = 处理), 而它们会印在同一句话里。
+
+    丢掉余数的实现下, 83 秒印成 "1 分", 读的人一做 27+56 就发现算不平
+    —— 2026-08-24 第一次真实生成的报告当场撞上 (见 _fmt_duration 的注释)。
+    """
+    facts = make_facts(incident={
+        "acknowledged_at": OPENED + timedelta(seconds=27),
+        "resolved_at": OPENED + timedelta(seconds=83),
+    })
+    assert fact_by_id(facts, "response_duration").text == "27 秒"
+    assert fact_by_id(facts, "onsite_duration").text == "56 秒"
+    assert fact_by_id(facts, "handle_duration").text == "1 分 23 秒"
+    # 只断言字面还不够: 三个 value 必须真的相加, 否则换个实现照样能凑出这三串
+    secs = {i: fact_by_id(facts, i).value for i in
+            ("response_duration", "onsite_duration", "handle_duration")}
+    assert secs["response_duration"] + secs["onsite_duration"] == secs["handle_duration"]
+
+
+def test_fact_pack_durations__whole_minute_keeps_no_seconds():
+    """整分不带秒 (不许变成 "12 分 0 秒"), 一小时以上仍只到分。"""
+    assert fact_by_id(make_facts(), "response_duration").text == "12 分"
+    assert fact_by_id(make_facts(), "handle_duration").text == "1 小时 12 分"
+
+
 def test_fact_pack_timestamps__use_passed_tz_not_environment():
     raw = make_raw()
     shanghai = rr.build_fact_pack(raw, tz=TZ)

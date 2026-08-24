@@ -116,3 +116,111 @@ service 层, 不自己拼 SQL, CLAUDE.md 不变量 4)。对开发库的一次性
 
 (`make ci-api-repro` 是同日上一轮 CI 修复新加的目标, 它替代单独跑 `test-api.sh`,
 且条件比 CI 更严 —— 先 DROP 常驻测试库。)
+
+---
+
+## 七、补跑记录: Agent 那半已完成 (2026-08-24)
+
+按第五节六步补跑完毕, README 占位已替换。**1 条报告任务, 2 次真实模型调用**
+(上限 3 次, 未触及第 3 次)。本轮只改了 `README.md` 与本文件; 未录制任何东西。
+
+**任务轨迹**: `POST /incidents/2/report` → 202, task_id = 11, report_id = 1;
+状态机实际路径 `collecting → drafting → validating → repairing → validating`,
+停在 `awaiting_review`, 未 finalize (给演示留着"等人过目"的现场)。
+那次 `repairing`: 初稿在 suggestion 里裸写"三十天", 校验器报
+`E_BARE_FACT (field=suggestion, detail="三十天")`, 修复稿删掉裸写字样后通过。
+
+### 渲染后五字段原文 (未做任何人工润色)
+
+```
+summary:    Zone 2 - 卖场中区 的 4 号传感器 触发水浸告警, 事故编号 #2, 严重级别 一般。
+handling:   系统于 2026-08-24 20:24 开单, 由 Bo Wang 接单, 派单对象为 无此记录, 跨区派单情况 无此记录; 最终以 人工 方式关闭, 采用策略 无此记录。
+impact:     从开单到解决共 1 分, 响应 27 秒, 到场 56 秒; 同区同期并发未结事故 0 条, 未造成持续影响。
+notable:    响应与到场均在极短时间内完成, 传感器在 2026-08-24 20:26 传感器转干 转干后随即于 2026-08-24 20:26 解决 解决。
+suggestion: 该传感器 2 次, 建议关注其是否存在偶发误报或轻微渗漏。
+```
+
+两处成文瑕疵照实进了 README, 没有修: notable 的"传感器转干 转干后"叠字
+(`{{tl_3}}` 占位符文本自带事件名); suggestion 的"该传感器 2 次"丢语境 ——
+它正是那次 `E_BARE_FACT` 修复的直接后果: 模型把裸写的"三十天"整个删了,
+只留占位符。拦得住裸写数字, 拦不住修完的句子变难读 —— 这句话也写进了 README。
+
+### 倾向计数实际值
+
+- `bare_fact_attempts = 1` (即上述那次 E_BARE_FACT);
+- `dangling_ref_attempts = 0`。
+
+### 实际花费 vs 预估
+
+`ai_usage` 按 task_id = 11 聚合 (第五节第 5 步那条 SQL, 库
+`localhost:5433/sentinel`):
+
+| 模型 | prompt_version | 调用次数 | input tokens | output tokens | estimated_cost_cny 合计 |
+|---|---|---|---|---|---|
+| doubao-seed-2-1-pro-260628 | r1 | 2 | 4042 | 497 | ¥0.039162 |
+
+预估是 ¥0.06–0.08 (按 3–4 次调用口径); 实际 **¥0.039**, 低于预估下限 ——
+这一跑只经过一轮修复, 2 次调用 (初稿 + 修复稿) 而非 3–4 次。
+
+### 必跑清单退出码 (README 改完后重跑)
+
+| 命令 | 结果 | 退出码 |
+|---|---|---|
+| `bash scripts/ci/lint.sh` | ruff + mypy 全过 (162 files) | 0 |
+| `bash scripts/ci/test-unit.sh` | 299 passed | 0 |
+| `make ci-api-repro` (DROP 后全新库) | 416 passed, 1 skipped | 0 |
+| `bash scripts/ci/test-eval-smoke.sh` | 10 条全过, 零回放 miss, 零注入得逞 | 0 |
+| `bash scripts/ci/test-docker.sh` | docker job 全部断言通过 | 0 |
+
+---
+
+## 八、第二次生成 (2026-08-24, `_fmt_duration` 修复后重跑)
+
+**为什么重跑**: `_fmt_duration` 原来把 83 秒印成 "1 分" (整分截断),
+与同一句话里的 "响应 27 秒, 到场 56 秒" 加不平。修复后模板与 Agent 两份的
+处理时长都变成 "1 分 23 秒", 第七节那份报告因此作废。
+
+**操作**: 先确认修复过 CI —— `make ci-api-repro` 绿, **418 passed, 1 skipped**
+(比第七节多 2 条, 是时长格式的新测试); `POST /reports/1/discard` 弃掉旧报告
+(report_id 1 转 discarded, 未删行); 重新 `POST /incidents/2/report` →
+task_id = 12, report_id = 2。**本轮 2 次真实调用, 正好顶到 2 次上限, 未超。**
+状态机路径与第一跑相同: `collecting → drafting → validating → repairing →
+validating → awaiting_review`, 未 finalize。
+
+### 渲染后五字段原文 (第二跑, 未做任何人工润色)
+
+```
+summary:    Zone 2 - 卖场中区 的 4 号传感器 触发水浸告警, 事故编号 #2, 严重级别 一般。
+handling:   系统自动开单后, 由 Bo Wang 接单并到场处置, 最终以 人工 方式确认传感器转干并关单; 派单对象记录为 无此记录, 是否跨区派单为 无此记录, 解决策略为 无此记录。
+impact:     从开单到接单用时 27 秒, 到场用时 56 秒, 全程处理用时 1 分 23 秒; 同区同期并发未结事故 0 条, 未造成持续影响。
+notable:    本次响应与处置速度极快, 传感器在接单后极短时间内即转干; 该传感器近 2 次 周期内开单数暂未呈现明显频发趋势。
+suggestion: (空字符串)
+```
+
+### 倾向计数与本跑的两处瑕疵
+
+- `bare_fact_attempts = 1` (`E_BARE_FACT, field=notable, detail="三十天"`),
+  `dangling_ref_attempts = 0` —— **两跑都栽在同一个词上**: "近三十天开单数"
+  这个指标的时间窗自带数字, 模型想引用这个指标就容易裸写"三十天";
+- 修复的副作用比第一跑更典型: 初稿 notable 本来通顺
+  ("该传感器近三十天开单 {{sensor_30d_count}}"), 修复稿把占位符挪进"三十天"
+  原来的句位, 得到"该传感器近 2 次 周期内开单数" —— 语法全对、校验全绿、
+  句子不是人话, 是"用了对的占位符但放错句子拦不住"的活例, 已写进 README;
+- suggestion 两稿都是空字符串 —— 校验器管"写了什么", 不管"该写没写"。
+  第一跑的两处瑕疵 (tl 占位符叠字 / suggestion 丢语境) 本跑都没有出现,
+  README 里对应段落已按本跑重写, 未保留旧描述。
+
+### 花费 (新跑 + 两跑合计)
+
+| task_id | 模型 | prompt_version | 调用次数 | input | output | estimated_cost_cny |
+|---|---|---|---|---|---|---|
+| 11 (已弃) | doubao-seed-2-1-pro-260628 | r1 | 2 | 4042 | 497 | ¥0.039162 |
+| 12 (现行) | doubao-seed-2-1-pro-260628 | r1 | 2 | 4044 | 484 | ¥0.038784 |
+| **合计** | | | **4** | **8086** | **981** | **¥0.077946** |
+
+两跑合计 ¥0.078, 仍在原任务书预估 ¥0.2 与 SPEC-008 封顶 ¥1 之内。
+弃掉的 task 11 那 ¥0.039 是 `_fmt_duration` 缺陷的返工成本, 照实记。
+
+**README 同步改动**: 除 `### Agent 那份` 整节按第二跑替换外, 模板小节的
+"处理时长 (开单到解决)" 一行也从 "1 分" 改为 "1 分 23 秒" —— 模板脚本与
+Agent 共用同一个 `_fmt_duration`, 修复后重跑模板脚本核实过, 其余 20 行逐字未变。

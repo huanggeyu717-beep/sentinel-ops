@@ -110,16 +110,28 @@ def _fmt_ts(dt: datetime, tz: ZoneInfo) -> str:
 
 
 def _fmt_duration(delta: timedelta) -> str:
+    """时长 -> 中文串。**不足一小时时带上秒, 不许把余数丢掉。**
+
+    2026-08-24 修。原实现 `minutes, _ = divmod(seconds, 60)` 直接丢余数,
+    于是 60–119 秒一律印成 "1 分"。要命的是**三条时长按定义相加**
+    (开→接单 + 接单→解决 = 开→解决), 而它们印在同一句话里 —— 第一次真实生成
+    的报告当场撞上: "从开单到解决共 1 分, 响应 27 秒, 到场 56 秒",
+    而 27 + 56 = 83。读的人一做加法就发现算不平, 而他会怀疑的恰好是本项目
+    最不能被怀疑的那件事: 这些数字是不是编的。
+    **一处看得见的算不平, 比十处没人注意的 bug 都贵。**
+
+    一小时以上仍然只到分: 误差 <60 秒, 相对量级可忽略, 且带上秒会让
+    "1 小时 12 分 7 秒"这种串挤占字段上限。这是取舍, 写在这里不藏。
+    """
     seconds = max(0, int(delta.total_seconds()))
     if seconds < 60:
         return f"{seconds} 秒"
-    minutes, _ = divmod(seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    if hours == 0:
-        return f"{minutes} 分"
-    if minutes == 0:
-        return f"{hours} 小时"
-    return f"{hours} 小时 {minutes} 分"
+    if seconds < 3600:
+        minutes, rest = divmod(seconds, 60)
+        return f"{minutes} 分" if rest == 0 else f"{minutes} 分 {rest} 秒"
+    hours, rest = divmod(seconds, 3600)
+    minutes = rest // 60
+    return f"{hours} 小时" if minutes == 0 else f"{hours} 小时 {minutes} 分"
 
 
 def _missing(fact_id: str, label: str) -> Fact:
