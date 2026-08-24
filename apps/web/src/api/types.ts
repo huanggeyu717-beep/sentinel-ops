@@ -194,3 +194,53 @@ export interface PolicyVersionDetail {
   created_at: string
   body: Record<string, unknown>
 }
+
+// ===== W6 事故报告 (SPEC-008) =====
+// 与 apps/api/app/routers/reports.py 的响应模型一一对应, 改这里之前先改后端。
+
+export interface ReportBody {
+  summary: string
+  handling: string
+  impact: string
+  notable: string
+  suggestion: string
+}
+
+export interface ReportFact {
+  id: string
+  label: string
+  value: unknown
+  text: string
+}
+
+export interface IncidentReport {
+  id: number
+  incident_id: number
+  task_id: number
+  status: 'draft' | 'final' | 'discarded'
+  body: ReportBody // 占位符原文
+  rendered: ReportBody | null // 渲染后的正文; 草稿还没过校验时为 null
+  fact_pack: ReportFact[] // 生成那一刻的事实包快照
+  // 两个倾向计数, 分开展示、不加总 (SPEC-008 第三节: 不报"幻觉率")
+  bare_fact_attempts: number
+  dangling_ref_attempts: number
+  created_by: number
+  created_at: string
+  updated_at: string
+  finalized_by: number | null
+  finalized_at: string | null
+}
+
+export interface ReportSnapshot {
+  ok: boolean
+  report: IncidentReport
+}
+
+export interface ReportTaskCreated {
+  ok: boolean
+  task_id: number
+  created: boolean // false = 已有未走完的报告任务 (任何人开的), 带回那一条
+  status: string
+  stage: string | null
+  suspected_interrupted: boolean
+}

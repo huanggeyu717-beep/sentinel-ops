@@ -19,9 +19,10 @@ from app.services.agent_tools import (
 )
 from policy_engine import policy_json_schema
 
-# SPEC-002 第五节的工具清单原文 (13 个)。注册表必须与它**完全相等** ——
-# 往注册表加工具却忘了更新分级, 让这条测试当场变红, 而不是静悄悄漏在审批环节
-# (与 SPEC-001 "分级表键集合 == 动作白名单"同一手法, 本项目第五处)。
+# SPEC-002 第五节的工具清单原文 (13 个) + SPEC-008 第四节的报告三工具。
+# 注册表必须与它**完全相等** —— 往注册表加工具却忘了更新分级, 让这条测试
+# 当场变红, 而不是静悄悄漏在审批环节 (与 SPEC-001 "分级表键集合 == 动作白名单"
+# 同一手法, 本项目第五处)。W6 加报告工具时这条如约红过一次, 分级随之补齐。
 SPEC_TOOLS = {
     "list_zones": "read",
     "list_sensors": "read",
@@ -36,6 +37,10 @@ SPEC_TOOLS = {
     "simulate_policy": "simulate",
     "request_approval": "write",
     "ask_clarification": "terminal",
+    # SPEC-008 第四节 (报告任务, 工具只有三个 —— 没有 ask_clarification)
+    "get_incident_facts": "read",
+    "create_report_draft": "draft",
+    "update_report_draft": "draft",
 }
 
 

@@ -152,9 +152,13 @@ class TaskList(BaseModel):
 
 # status 过滤的合法取值 = agent_tasks.status 的 CHECK 集合去掉 'rejected'
 # (0001 留的死值, 本 SPEC 不用, 见 agent_service 模块注释) —— 用 Literal 让
-# 写错的过滤值得到 422, 而不是静默返回空列表
+# 写错的过滤值得到 422, 而不是静默返回空列表。
+# awaiting_review 是 W6 报告任务的等待态 (SPEC-008 第五节): 这个端点存在的理由
+# 就是"打开 Studio 要看见有几条等我处理", 报告的"等我过目"与策略的"等我批"
+# 是同一个用途, 少了它就筛不出来。
 TaskStatusFilter = Literal[
-    "running", "clarifying", "awaiting_approval", "completed", "failed", "dead_letter"
+    "running", "clarifying", "awaiting_approval", "awaiting_review",
+    "completed", "failed", "dead_letter"
 ]
 
 

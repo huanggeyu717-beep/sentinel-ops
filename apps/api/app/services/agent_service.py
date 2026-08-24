@@ -250,7 +250,8 @@ _LIST_TASKS = text(f"""
         ORDER BY s.seq DESC LIMIT 1
     ) draft ON true
     WHERE CAST(:status AS text) IS NULL OR t.status = :status
-    ORDER BY (t.status IN ('running', 'clarifying', 'awaiting_approval')) DESC,
+    ORDER BY (t.status IN ('running', 'clarifying', 'awaiting_approval',
+                           'awaiting_review')) DESC,
              t.created_at DESC, t.id DESC
     LIMIT :limit
 """)
@@ -465,11 +466,13 @@ async def finish_task(
     error_code: str | None = None,
     error_detail: str | None = None,
 ) -> None:
-    """running -> awaiting_approval / failed / dead_letter, 过闸。
+    """running -> awaiting_approval / awaiting_review / failed / dead_letter, 过闸。
 
     先落时间线再翻状态 (发号闸只对 running 放行, 顺序反了最后一步就记不上)。
     """
-    terminal = status != "awaiting_approval"
+    # awaiting_review 与 awaiting_approval 一样是"等人, 不是终态" (SPEC-008
+    # 第五节: 报告等的是过目不是审批, 所以是新词; 但都不该盖 completed_at)
+    terminal = status not in ("awaiting_approval", "awaiting_review")
     await record_step(
         session, task_id, runner_id,
         tool_name="stage_transition",

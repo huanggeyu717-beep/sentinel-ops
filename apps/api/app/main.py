@@ -16,7 +16,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 from .db import apply_dev_seed, run_migrations
-from .routers import agent_tasks, auth, drills, employees, incidents, ingest, policies, status
+from .routers import (
+    agent_tasks,
+    auth,
+    drills,
+    employees,
+    incidents,
+    ingest,
+    policies,
+    reports,
+    status,
+)
 from .services import agent_runtime, auth_service, policy_runtime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -70,6 +80,7 @@ app.include_router(drills.router)
 app.include_router(policies.router)
 app.include_router(employees.router)
 app.include_router(agent_tasks.router)  # W4: Agent 任务 + SSE (SPEC-002 第一节)
+app.include_router(reports.router)  # W6: 事故报告 (SPEC-008 第八节)
 
 
 @app.get("/health")

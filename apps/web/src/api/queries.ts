@@ -2,16 +2,18 @@
 // 传感器/设备/事故 5 秒, 演练进度 2 秒 (在 DrillPanel 里单独定义)。
 import { useQuery } from '@tanstack/react-query'
 
-import { api } from './client'
+import { api, ApiError } from './client'
 import type {
   AgentTaskListItem,
   Device,
   Incident,
   IncidentEvent,
+  IncidentReport,
   Me,
   PolicyListItem,
   PolicyVersionDetail,
   Reading,
+  ReportSnapshot,
   Scenario,
   Sensor,
 } from './types'
@@ -92,6 +94,25 @@ export const useAgentTasks = () =>
     queryFn: () => api<{ ok: boolean; tasks: AgentTaskListItem[] }>('/agent-tasks'),
     refetchInterval: POLL_STATUS_MS,
     select: (d) => d.tasks,
+  })
+
+// ===== W6 事故报告 (SPEC-008) =====
+// 该事故当前那一份 (非 discarded); 404 是常态 ("还没生成"), 折成 null 不算错误。
+// 5 秒轮询: 生成过程的逐步进度走任务 SSE, 这里只看"报告出来了没 / 状态变了没"。
+export const useIncidentReport = (incidentId: number | null) =>
+  useQuery({
+    queryKey: ['incident-report', incidentId],
+    queryFn: async (): Promise<IncidentReport | null> => {
+      try {
+        const d = await api<ReportSnapshot>(`/incidents/${incidentId}/report`)
+        return d.report
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null
+        throw e
+      }
+    },
+    enabled: incidentId !== null,
+    refetchInterval: POLL_STATUS_MS,
   })
 
 export const usePolicies = () =>

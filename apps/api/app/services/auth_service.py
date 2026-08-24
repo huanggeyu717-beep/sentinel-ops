@@ -44,19 +44,27 @@ PERM_APPROVE_POLICY = "policies:approve"                # W3 审批/发布/撤�
 PERM_POLICY_DRAFT = "policies:draft"                    # W3 写草稿/校验/模拟/提交审批 (operator+)
 PERM_MANAGE_USERS = "users:manage"                      # 用户与角色管理
 PERM_TRIGGER_DRILL = "drills:trigger"                   # 触发演练 (SPEC-005 决策 6: operator+)
+# W6 事故报告 (SPEC-008 第八节): 两个都给 operator+, **不做"事故处理人"的行级
+# 归属判断** —— 本项目的 RBAC 全是角色级, 报告风险低到不值得为它新起一套授权维度。
+# 能起草的就能定稿。
+PERM_REPORT_DRAFT = "reports:draft"        # 生成 / 弃稿
+PERM_REPORT_FINALIZE = "reports:finalize"  # 定稿
 
 _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "viewer": frozenset({PERM_READ}),
     "operator": frozenset(
-        {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_TRIGGER_DRILL, PERM_POLICY_DRAFT}
+        {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_TRIGGER_DRILL, PERM_POLICY_DRAFT,
+         PERM_REPORT_DRAFT, PERM_REPORT_FINALIZE}
     ),
     "manager": frozenset(
         {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_CROSS_ZONE_ASSIGN,
-         PERM_APPROVE_POLICY, PERM_POLICY_DRAFT, PERM_TRIGGER_DRILL}
+         PERM_APPROVE_POLICY, PERM_POLICY_DRAFT, PERM_TRIGGER_DRILL,
+         PERM_REPORT_DRAFT, PERM_REPORT_FINALIZE}
     ),
     "admin": frozenset(
         {PERM_READ, PERM_INCIDENT_TRANSITION, PERM_CROSS_ZONE_ASSIGN,
-         PERM_APPROVE_POLICY, PERM_POLICY_DRAFT, PERM_MANAGE_USERS, PERM_TRIGGER_DRILL}
+         PERM_APPROVE_POLICY, PERM_POLICY_DRAFT, PERM_MANAGE_USERS, PERM_TRIGGER_DRILL,
+         PERM_REPORT_DRAFT, PERM_REPORT_FINALIZE}
     ),
 }
 

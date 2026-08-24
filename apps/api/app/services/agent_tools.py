@@ -1,4 +1,5 @@
-"""Agent 的 13 个工具: 封装与注册表 (SPEC-002 第五节)。
+"""Agent 的 16 个工具: 封装与注册表 (SPEC-002 第五节 13 个策略编译工具 +
+SPEC-008 第四节 3 个事故报告工具)。
 
 规矩三条:
 1. 工具一律**调 service 函数, 不自己拼 SQL** (CLAUDE.md 不变量 4)。缺的只读能力
@@ -24,7 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from policy_engine import policy_json_schema
 
 from ..config import settings
-from . import agent_service, employee_service, inventory_service, policy_service
+from . import (
+    agent_service,
+    employee_service,
+    inventory_service,
+    policy_service,
+    report_task_service,
+)
 from .drill_service import SCENARIOS_DIR
 
 
@@ -176,6 +183,46 @@ async def _request_approval(ctx: ToolContext, args: dict[str, Any]) -> Any:
     )
 
 
+# ===== 事故报告 (3, SPEC-008 第四节: 工具只有三个, 没有 ask_clarification ——
+# 事故已经结了现场没人可问, 事实不足由"事实包一律产全"机制兜住) =====
+
+
+async def _get_incident_facts(ctx: ToolContext, args: dict[str, Any]) -> Any:
+    # collecting 阶段由运行时确定性驱动 (与 discovering 的 list_* 同一口径),
+    # incident_id 来自任务输入, 不来自模型
+    return {
+        "facts": await report_task_service.load_fact_pack(
+            ctx.session, int(_require(args, "incident_id"))
+        )
+    }
+
+
+async def _create_report_draft(ctx: ToolContext, args: dict[str, Any]) -> Any:
+    # incident_id 与 fact_pack 由运行时注入 (模型只给 body), 手法同 _pin_draft:
+    # 不采信模型报的事故号, 快照就是 collecting 阶段给它看的那一份
+    body = _require(args, "body")
+    if not isinstance(body, dict):
+        raise InvalidToolArguments("body 必须是对象 (五个字段的报告草稿)")
+    return await report_task_service.create_report_draft(
+        ctx.session,
+        task_id=ctx.task_id,
+        incident_id=int(_require(args, "incident_id")),
+        body=body,
+        fact_pack=_require(args, "fact_pack"),
+        created_by=ctx.user_id,
+    )
+
+
+async def _update_report_draft(ctx: ToolContext, args: dict[str, Any]) -> Any:
+    # 就地改**本任务**那一版草稿: 按 ctx.task_id 定位, 模型连报告 id 都不经手
+    body = _require(args, "body")
+    if not isinstance(body, dict):
+        raise InvalidToolArguments("body 必须是对象 (修改后的完整草稿)")
+    return await report_task_service.update_report_draft(
+        ctx.session, task_id=ctx.task_id, body=body
+    )
+
+
 # ===== 终止 (1) =====
 
 
@@ -226,6 +273,14 @@ REGISTRY: dict[str, ToolSpec] = {
                  "建 approvals 记录, 版本转 awaiting_approval"),
         ToolSpec("ask_clarification", "terminal", _ask_clarification,
                  "把问题抛回给人, 任务转 clarifying"),
+        # W6 事故报告 (SPEC-008): 报告任务的三个工具, 与策略工具同一张注册表、
+        # 同一套 service 复用约定; 按 task_type 分派用哪批的是 agent_runtime
+        ToolSpec("get_incident_facts", "read", _get_incident_facts,
+                 "整个事实包 (id/label/value/text, 一律产全)"),
+        ToolSpec("create_report_draft", "draft", _create_report_draft,
+                 "写五个字段的报告草稿, 落 incident_reports 一行"),
+        ToolSpec("update_report_draft", "draft", _update_report_draft,
+                 "修复循环用: 就地改本任务这一份报告草稿"),
     )
 }
 
@@ -240,6 +295,13 @@ TOOLS_BY_STAGE: dict[str, tuple[str, ...]] = {
     "compiling": ("create_policy", "add_policy_version", "ask_clarification"),
     "compiling_with_draft": ("update_policy_draft", "ask_clarification"),
     "repairing": ("update_policy_draft", "ask_clarification"),
+    # 报告任务 (SPEC-008 第四节)。键带 report_ 前缀: 报告的 repairing 阶段与
+    # 策略同名, 但工具不同, 不能共键。报告的三个工具**不受消融能力档影响**
+    # (雷区 8): AblationProfile 的档位是给策略编译定义的, 报告这边不经
+    # _stage_tools 裁剪, 由 agent_runtime._round_report 直接取本表。
+    "collecting": ("get_incident_facts",),
+    "report_drafting": ("create_report_draft",),
+    "report_repairing": ("update_report_draft",),
 }
 
 

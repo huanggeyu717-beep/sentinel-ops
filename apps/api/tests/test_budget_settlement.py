@@ -1,6 +1,6 @@
 """第 0 件: 回补挂在"任务进终态"上, 且是幂等的结算 (SPEC-009 第二节末尾)。
 
-两个方向缺一不可 (缺任何一条, 另一条就守不住钱):
+三个方向缺一不可 (缺任何一条, 另一条就守不住钱):
 
 1. **清扫判死也要结算**: 停在 clarifying 被清扫判死的任务, 预扣回到台账。
    没有它, 预扣 0.60 × 单账号配额 3 只需一个访客"点开、看到反问、关掉"几下,
@@ -8,6 +8,10 @@
 2. **同一笔钱不会被减两遍**: 轮次收尾与清扫都对同一条任务结算时台账只减一次。
    没有这一条, 一个"每次都回补"的实现也能让上一条绿 —— 而它把台账越算越少,
    直到见底、护栏形同虚设。
+3. **该留在账上的不许退**: 一轮以 clarifying 收场时预扣留着不动 (方向三,
+   2026-08-24 补)。这一条原本**没有任何测试守着** —— 往
+   `_REFUNDABLE_OUTCOMES` 里加一个 `clarifying`, 上面两条照样全绿。
+   它是方向一的反面: 只测"该结算的结算了", 一个"什么都结算"的实现全绿。
 
 清扫侧刻意调 agent_runtime.sweep_once —— maintenance_loop 每轮跑的就是这个
 函数, 测它等于测循环体; 只测 budget_service.refund_task_hold 的话, "清扫忘了
@@ -165,3 +169,48 @@ def test_round_end_then_sweep__settles_once(client, svc, monkeypatch):
     second = _sweep(svc)  # 下一轮清扫: 任务已判死, 不再命中, 更不再减账
     assert not any(r["task_id"] == task_id for r in second)
     assert _spent() == pytest.approx(0.6)
+
+
+# ===== 方向三: 还会再花钱的中间态, 不结算 =====
+
+
+def test_round_ends_clarifying__hold_stays_on_ledger(client, svc, monkeypatch):
+    """一轮以 clarifying 收场时预扣**留在账上**, 不回补。
+
+    人回答之后恢复的那一轮花的还是同一笔预扣。这时候把钱退回去, 一个访客就能
+    "问一句反问 -> 拿回额度 -> 答一句接着跑", 同一笔预扣支撑无限多轮模型调用,
+    SPEC-009 的花钱护栏当场作废。一直没人答的那些由清扫判死时结算 (方向一)。
+
+    这一条是评审方跑变异查出来的空白 (2026-08-24): 把 clarifying 加进
+    `_REFUNDABLE_OUTCOMES` 之后, 报告档与结算档**全部仍然是绿的** ——
+    与 test_report_render 那条"计数器恒返回 1"同一课, 只测一个方向的判据,
+    从外面看和真的守着一模一样。
+    """
+    import asyncio
+
+    _seed_ledger(monkeypatch, spent=0.6)
+
+    async def seed(conn):
+        return await insert_task(
+            conn, input_hash="round-clarify", status="clarifying",
+        )
+
+    task_id = db(seed)
+
+    async def go(factory):
+        # 模拟"这一轮以 clarifying 收场"的后台协程, 挂上真实的回补钩子
+        async def fake_round() -> str:
+            return "clarifying"
+
+        round_task = asyncio.create_task(fake_round())
+        budget_service.refund_when_done(round_task, task_id, factory)
+        await round_task
+        for _ in range(200):  # 真回补的话是独立协程, 给它跑完的机会
+            if not budget_service._REFUND_TASKS:
+                break
+            await asyncio.sleep(0.01)
+
+    svc(go)
+
+    assert _spent() == pytest.approx(0.6)  # 预扣原封不动留在台账上
+    assert _task_state(task_id)["hold_refunded_at"] is None

@@ -8,6 +8,7 @@ import { useAgentTasks, usePolicies } from '../../api/queries'
 import type { AgentTaskCreated, AgentTaskListItem, Me, TimelineItem } from '../../api/types'
 import { fmtTime } from '../../lib/format'
 import ApprovalPanel from './ApprovalPanel'
+import ReportPanel from './ReportPanel'
 import TraceTimeline from './TraceTimeline'
 import { useTaskEvents } from './useTaskEvents'
 
@@ -81,6 +82,9 @@ export default function StudioPage({ me }: { me: Me }) {
         {taskId !== null && (
           <ApprovalPanel me={me} items={items} taskStatus={status?.status ?? null} />
         )}
+
+        {/* W6 事故报告 (SPEC-008): 生成任务的执行过程复用上面的时间线 */}
+        <ReportPanel onTaskStarted={setTaskId} />
       </main>
     </>
   )
@@ -90,6 +94,7 @@ const STATUS_LABELS: Record<string, string> = {
   running: '执行中',
   clarifying: '等你回答',
   awaiting_approval: '等待审批',
+  awaiting_review: '等人过目', // W6 报告任务: 过目不是审批, 词也分开 (SPEC-008 第五节)
   completed: '已完成',
   failed: '失败',
   dead_letter: '异常中止',

@@ -46,7 +46,14 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import settings
-from . import agent_prompts, agent_service, agent_tools, budget_service, policy_service
+from . import (
+    agent_prompts,
+    agent_service,
+    agent_tools,
+    budget_service,
+    policy_service,
+    report_task_service,
+)
 from .agent_tools import InvalidToolArguments, ToolContext, ToolTimeout
 from .llm_client import (
     LLMCallTimeout,
@@ -208,6 +215,11 @@ class _RoundState:
     last_body: dict[str, Any] | None = None
     # 消融能力档 (W5)。默认 production, 即 W4 出厂路径 —— 见 AblationProfile
     profile: AblationProfile | None = None
+    # ==== 报告任务 (SPEC-008) 专用台账, 策略任务恒为 None ====
+    # 事实包 (collecting 阶段取回的 JSON 形状, 与 fact_pack 快照同一份);
+    # last_issues 复用上面的字段装校验违规 (code/field/detail)
+    report_incident_id: int | None = None
+    report_facts: list[dict[str, Any]] | None = None
 
     @property
     def caps(self) -> AblationProfile:
@@ -227,8 +239,9 @@ async def run_task(
 ) -> str:
     """跑一轮任务 (后台 asyncio 任务的主体; 本段无 HTTP, 由测试直接 await)。
 
-    返回本轮结局: awaiting_approval / clarifying / failed / dead_letter /
-    not_claimed / lease_lost。单轮预算只算机器在跑的时间, 跨轮不累加。
+    返回本轮结局: awaiting_approval / awaiting_review (报告任务) / clarifying /
+    failed / dead_letter / not_claimed / lease_lost。
+    单轮预算只算机器在跑的时间, 跨轮不累加。
     profile 不传时按 config 解析, 默认 production —— 两条路必须产出相同的
     agent_steps 序列 (SPEC-007 验收 15, 由测试守着)。
     """
@@ -242,19 +255,30 @@ async def run_task(
     task_input: dict[str, Any] = (
         raw_input if isinstance(raw_input, dict) else json.loads(raw_input)
     )
+    is_report = task["task_type"] == "incident_report"
     st = _RoundState(
         task_id=task_id,
         user_id=task["user_id"],
         input_text=task_input.get("text", ""),
         target_policy_id=task_input.get("target_policy_id"),
-        stage=task["stage"] if task["stage"] != "clarifying" else "discovering",
+        # clarifying -> discovering 的改写是策略状态机专用 (雷区 7): 报告任务
+        # 没有澄清, stage 原样带入 (create_report_task 建行时已显式写 collecting)
+        stage=(
+            task["stage"] if is_report or task["stage"] != "clarifying"
+            else "discovering"
+        ),
         draft_version_id=draft,
         clarifications=_extract_clarifications(timeline),
         profile=_resolve_profile(profile),
     )
+    # 只分派循环体, 外壳 (租约/单轮预算/失败出口分类) 两种任务共用一套
+    round_body = (
+        _round_report(st, llm, factory, runner_id) if is_report
+        else _round(st, llm, factory, runner_id)
+    )
     try:
         await asyncio.wait_for(
-            _round(st, llm, factory, runner_id),
+            round_body,
             timeout=settings().agent_round_budget_seconds,
         )
     except _TaskFinished as fin:
@@ -438,6 +462,105 @@ async def _round(
             raise AssertionError(f"未知 stage: {st.stage}")
 
 
+async def _round_report(
+    st: _RoundState,
+    llm: LLMClient,
+    factory: async_sessionmaker[AsyncSession],
+    runner_id: str,
+) -> None:
+    """报告任务的循环体 (SPEC-008 第四节): collecting -> drafting -> validating
+    -(有错)-> repairing -> validating, 通过即 awaiting_review。
+
+    与策略循环体的三处刻意不同, 都是 SPEC 定死的:
+    - 没有 ask_clarification: 事故已经结了, 现场没人可问, 事实不足由
+      "事实包一律产全"机制兜住 (模型照常写 {{ack_by}}, 渲染出"无此记录");
+    - 修满 MAX_REPAIRS 次仍不过 -> **failed** 不是 clarifying (没人可问),
+      报告标 discarded —— failed 专指"模型没写对";
+    - 工具清单不经 _stage_tools 的消融裁剪 (雷区 8): 能力档是给策略编译
+      定义的, 报告的三个工具在任何档下都一样。
+    """
+    # incident_id 从任务输入解出 (input_text 是 report_task_service 定死的
+    # "incident_report:{id}", 有测试钉住这个格式)
+    st.report_incident_id = int(st.input_text.rpartition(":")[2])
+    while True:
+        if st.stage == "collecting":
+            # 运行时确定性驱动, 与策略的 discovering 同一口径: 取事实是本地
+            # 查询不是模型能力, 照记工具步骤 —— 藏起来才是造假
+            result = await _tool_step(
+                st, factory, runner_id, "get_incident_facts",
+                {"incident_id": st.report_incident_id},
+            )
+            st.report_facts = result["facts"]
+            await _advance(st, factory, runner_id, "drafting")
+        elif st.stage == "drafting":
+            resp = await _report_llm_call(st, llm, factory, runner_id,
+                                          stage="drafting")
+            call = _expect_tool(resp, agent_tools.TOOLS_BY_STAGE["report_drafting"])
+            body = call.arguments.get("body")
+            # incident_id 与 fact_pack 由运行时注入, 不采信模型 (同 _pin_draft);
+            # 快照就是 collecting 阶段给模型看的那一份
+            await _tool_step(
+                st, factory, runner_id, "create_report_draft",
+                {"body": body, "incident_id": st.report_incident_id,
+                 "fact_pack": st.report_facts},
+                resp=resp,
+            )
+            if isinstance(body, dict):
+                st.last_body = body
+            await _advance(st, factory, runner_id, "validating")
+        elif st.stage == "validating":
+            # 校验是 service 侧的确定性检查 (两道硬拦 + 上限), 对着 fact_pack
+            # 快照跑; 违规按项累加进 incident_reports 的两个计数列。
+            # 校验 + 记步骤同一个事务, 发号闸照常生效 (租约丢了整体回滚)。
+            async with factory() as session, session.begin():
+                result = await report_task_service.validate_task_report(
+                    session, task_id=st.task_id
+                )
+                await agent_service.record_step(
+                    session, st.task_id, runner_id,
+                    tool_name="validate_report",
+                    result_summary={
+                        "ok": result["ok"], "violations": result["violations"],
+                        "bare_fact_attempts": result["bare_fact_attempts"],
+                        "dangling_ref_attempts": result["dangling_ref_attempts"],
+                    },
+                )
+            if result["ok"]:
+                st.last_issues = None
+                async with factory() as session, session.begin():
+                    await agent_service.finish_task(
+                        session, st.task_id, runner_id, status="awaiting_review"
+                    )
+                raise _TaskFinished("awaiting_review")
+            st.last_issues = result["violations"]
+            if st.repairs_used < MAX_REPAIRS:
+                await _advance(st, factory, runner_id, "repairing")
+            else:
+                codes = sorted({str(v.get("code")) for v in result["violations"]})
+                await _fail(
+                    factory, st, runner_id, status="failed",
+                    code="report_validation_failed",
+                    detail=f"修满 {MAX_REPAIRS} 次仍未过校验: {codes}",
+                )
+                raise _TaskFinished("failed")
+        elif st.stage == "repairing":
+            resp = await _report_llm_call(st, llm, factory, runner_id,
+                                          stage="repairing")
+            call = _expect_tool(resp, agent_tools.TOOLS_BY_STAGE["report_repairing"])
+            body = call.arguments.get("body")
+            await _tool_step(
+                st, factory, runner_id, "update_report_draft",
+                {"body": body}, resp=resp,
+            )
+            if isinstance(body, dict):
+                st.last_body = body
+            st.repairs_used += 1
+            # 修完必须回 validating 重新校验 —— 修完不验等于没修 (与策略同规)
+            await _advance(st, factory, runner_id, "validating")
+        else:  # pragma: no cover
+            raise AssertionError(f"报告任务未知 stage: {st.stage}")
+
+
 async def _advance(
     st: _RoundState,
     factory: async_sessionmaker[AsyncSession],
@@ -516,6 +639,46 @@ async def _compile_direct(
     st.last_body = body
 
 
+async def _llm_complete(
+    st: _RoundState,
+    llm: LLMClient,
+    factory: async_sessionmaker[AsyncSession],
+    runner_id: str,
+    *,
+    stage: str,
+    messages: list[dict[str, str]],
+    tool_names: tuple[str, ...],
+) -> LLMResponse:
+    """总数上限 + 发请求 + 计量落账, 策略与报告两个循环体共用 —— 拆出来是让
+    报告任务复用同一套硬上限与 ai_usage 落账, 不复制第二份 (雷区 7 的精神)。"""
+    async with factory() as session, session.begin():
+        used = await agent_service.llm_calls_used(session, st.task_id)
+    if used >= settings().agent_max_llm_calls:
+        await _fail(
+            factory, st, runner_id, status="failed", code="llm_calls_exhausted",
+            detail=f"LLM 调用总数用尽 (上限 {settings().agent_max_llm_calls}, 跨轮累加)",
+        )
+        raise _TaskFinished("failed")
+    request = LLMRequest(
+        task_id=st.task_id, stage=stage,
+        messages=messages,
+        tools=agent_prompts.tool_schemas(tool_names),
+    )
+    try:
+        resp = await llm.complete(request)
+    except ModelProtocolError as e:
+        # 协议错的调用照样计费 (账单不会退款), 先落账再让 run_task 收口
+        if e.usage is not None:
+            async with factory() as session, session.begin():
+                await agent_service.record_llm_usage(session, st.task_id, e.usage)
+        raise
+    # 计量在独立小事务里落库: 后续工具执行失败回滚时, 这次调用照样计数
+    # (真实模型的账单不会因为工具失败而退款)
+    async with factory() as session, session.begin():
+        await agent_service.record_llm_usage(session, st.task_id, resp)
+    return resp
+
+
 async def _llm_call(
     st: _RoundState,
     llm: LLMClient,
@@ -527,14 +690,6 @@ async def _llm_call(
     only_clarify: bool = False,
     direct: bool = False,
 ) -> LLMResponse:
-    async with factory() as session, session.begin():
-        used = await agent_service.llm_calls_used(session, st.task_id)
-    if used >= settings().agent_max_llm_calls:
-        await _fail(
-            factory, st, runner_id, status="failed", code="llm_calls_exhausted",
-            detail=f"LLM 调用总数用尽 (上限 {settings().agent_max_llm_calls}, 跨轮累加)",
-        )
-        raise _TaskFinished("failed")
     if direct:
         # A0: 无工具, 清单在 system prompt 里 (v3-a0, SPEC-007 第四节)
         assert st.inventory is not None
@@ -556,24 +711,36 @@ async def _llm_call(
             ("ask_clarification",) if only_clarify
             else _stage_tools(st, trim or stage)
         )
-    request = LLMRequest(
-        task_id=st.task_id, stage=stage,
-        messages=messages,
-        tools=agent_prompts.tool_schemas(tool_names),
+    return await _llm_complete(
+        st, llm, factory, runner_id,
+        stage=stage, messages=messages, tool_names=tool_names,
     )
-    try:
-        resp = await llm.complete(request)
-    except ModelProtocolError as e:
-        # 协议错的调用照样计费 (账单不会退款), 先落账再让 run_task 收口
-        if e.usage is not None:
-            async with factory() as session, session.begin():
-                await agent_service.record_llm_usage(session, st.task_id, e.usage)
-        raise
-    # 计量在独立小事务里落库: 后续工具执行失败回滚时, 这次调用照样计数
-    # (真实模型的账单不会因为工具失败而退款)
-    async with factory() as session, session.begin():
-        await agent_service.record_llm_usage(session, st.task_id, resp)
-    return resp
+
+
+async def _report_llm_call(
+    st: _RoundState,
+    llm: LLMClient,
+    factory: async_sessionmaker[AsyncSession],
+    runner_id: str,
+    *,
+    stage: str,
+) -> LLMResponse:
+    """报告任务的模型调用: 报告 prompt + 未裁剪的报告工具清单 (雷区 8:
+    不经 _stage_tools —— 消融档是策略编译的自变量, 报告工具任何档下都一样)。"""
+    assert st.report_facts is not None  # collecting 已跑
+    messages = agent_prompts.build_report_messages(
+        stage,
+        facts=st.report_facts,
+        violations=st.last_issues,
+        draft_body=st.last_body if stage == "repairing" else None,
+    )
+    tool_names = agent_tools.TOOLS_BY_STAGE[
+        "report_drafting" if stage == "drafting" else "report_repairing"
+    ]
+    return await _llm_complete(
+        st, llm, factory, runner_id,
+        stage=stage, messages=messages, tool_names=tool_names,
+    )
 
 
 def _extract_clarifications(
@@ -714,6 +881,8 @@ def _summarize(name: str, result: Any) -> dict[str, Any]:
         return {"result": result}
     if name in ("create_policy", "add_policy_version", "update_policy_draft"):
         return result  # 含 version_id / previous_body, 全保留
+    if name in ("create_report_draft", "update_report_draft"):
+        return result  # 含 report_id / previous_body (修复前的中间态只存在这里)
     if name == "validate_policy":
         return {"ok": result["ok"], "issues": result["issues"]}
     if name == "simulate_policy":
@@ -778,13 +947,16 @@ async def _fail(
 ) -> None:
     """失败收口: 草稿标 discarded (不删, W5 要评) + 任务落终态, 同一个事务。
 
-    LeaseLost 时静默返回 —— 清扫可能已经先一步把任务判死了, 那就是终态。
+    报告任务的草稿在 incident_reports 里, 同一句话同一个事务标 discarded
+    (SPEC-008 第四节: 修不过 -> failed + 报告 discarded); 策略任务没有报告行,
+    那一步是 0 行更新。LeaseLost 时静默返回 —— 清扫可能已经先一步把任务判死了。
     """
     try:
         async with factory() as session, session.begin():
             draft = await agent_service.find_task_draft_version(session, st.task_id)
             if draft is not None:
                 await policy_service.discard_version(session, draft)
+            await report_task_service.discard_task_report(session, st.task_id)
             await agent_service.finish_task(
                 session, st.task_id, runner_id,
                 status=status, error_code=code, error_detail=detail,
@@ -915,5 +1087,7 @@ async def sweep_once(session: AsyncSession) -> list[dict[str, Any]]:
         draft = await agent_service.find_task_draft_version(session, r["task_id"])
         if draft is not None:
             await policy_service.discard_version(session, draft)
+        # 报告任务判死时草稿同样标弃 (策略任务 0 行更新), 与 _fail 同一句话
+        await report_task_service.discard_task_report(session, r["task_id"])
         await budget_service.refund_task_hold(session, r["task_id"])
     return reaped

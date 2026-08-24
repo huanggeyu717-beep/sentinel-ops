@@ -149,12 +149,17 @@ async def refund_task_hold(session: AsyncSession, task_id: int) -> None:
 #
 # 本回调只在本轮结局意味着"这条任务不会再发任何 LLM 调用"时结算:
 # - awaiting_approval: 审批批不批都不再调模型;
+# - awaiting_review (SPEC-008 报告任务): 人过目定稿或退回都不再调模型 ——
+#   不加这一项, 每生成一份报告就永久占住一笔预扣不回补, 用户配额一份一份
+#   漏光且不会报错 (第二段雷区 3);
 # - failed / dead_letter: 终态;
 # - clarifying **不结算**: 预扣按单任务最坏情况 (12 次调用跨轮累加) 估的,
 #   人回答后恢复的轮次花的还是同一笔预扣; 一直没人答的由清扫判死时结算;
 # - not_claimed / lease_lost: 任务归了别人 (或清扫), 这一轮不知道全貌, 不动账
 #   —— 真正进终态的那条路径 (归属方的收尾, 或清扫) 会结算。
-_REFUNDABLE_OUTCOMES = frozenset({"awaiting_approval", "failed", "dead_letter"})
+_REFUNDABLE_OUTCOMES = frozenset(
+    {"awaiting_approval", "awaiting_review", "failed", "dead_letter"}
+)
 
 # create_task 返回的回补协程要留强引用, 否则可能跑完前被垃圾回收
 # (与 agent_runtime._BACKGROUND_TASKS 同一条官方文档脚注)。
