@@ -92,7 +92,7 @@ curl 场景可从登录响应的 `Set-Cookie` 取 token, 以 `Authorization: Bea
 | W3 | Policy DSL + 双层验证器 + 引擎/模拟器 + 版本化审批发布 | 完成, 见 [SPEC-001](docs/specs/SPEC-001-policy-dsl.md) / [SPEC-006](docs/specs/SPEC-006-policy-lifecycle.md) |
 | W4 | Agent 编排 + Automation Studio + 真实模型接入 | 完成, 见 [SPEC-002](docs/specs/SPEC-002-agent-orchestration.md) |
 | W5 | 100 条评测集 + 确定性 grader + 五组消融对照 (每个数字带 run_id, 可离线重算) | 完成, 见 [SPEC-007](docs/specs/SPEC-007-evals-and-ablation.md) / [消融结果](evals/runs/summary_ablation.md) |
-| W6 | 免费托管上线 + 事故报告 (完成, 见 [SPEC-008](docs/specs/SPEC-008-incident-report.md)) + 文档与演示视频 | 进行中。**MCP server 与 OTel 已按优先级砍掉** —— 不是没时间做, 是排在后面且先撞上了止损线, 理由见 [进度与交接](docs/进度与交接.md) 的"W6 范围决定" |
+| W6 | 事故报告 + 生产形态部署配置 + 文档 | 完成。事故报告见 [SPEC-008](docs/specs/SPEC-008-incident-report.md); 生产 compose 覆盖层 (Caddy、生产种子、1 GiB 内存验收) 由 CI 起容器验证。**公开演示环境暂不开放**, 本地体验见上方 Quickstart, 界面演示以本页录屏与截图为准。**MCP server 与 OTel 已按优先级砍掉** —— 不是没时间做, 是排在后面且先撞上了止损线, 理由见 [进度与交接](docs/进度与交接.md) 的"W6 范围决定" |
 
 ## 为什么需要 Agent (而不是表单或聊天框)
 
@@ -372,5 +372,6 @@ suggestion:
 
 ## 前身
 
-原系统 (Arduino MKR1010 ×2 + AWS IoT Core/Lambda/RDS/DynamoDB/SES) 曾真实部署运行,
-端到端演示视频见 docs/。AWS 环境已按成本考虑注销, 组件映射见 docs/aws-mapping.md。
+原系统是 UCL IoT 课程的六人团队项目 (本人负责前端仪表盘), 由 Arduino MKR1010 ×2 + AWS IoT Core/Lambda/RDS/DynamoDB/SES
+组成并曾真实部署运行。AWS 环境已按成本考虑注销, 组件映射见 docs/aws-mapping.md。
+Sentinel 是在此基础上的个人独立重构。
