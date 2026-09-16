@@ -1,10 +1,30 @@
-# Sentinel — AI-Native IoT Incident Automation Platform
+<div align="center">
+
+# Sentinel
+
+**AI 原生 IoT 事故自动化平台**
 
 [![ci](https://github.com/huanggeyu717-beep/sentinel-ops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/huanggeyu717-beep/sentinel-ops/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React_%2B_TypeScript-3178C6?logo=typescript&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker_Compose-2496ED?logo=docker&logoColor=white)
+
+[它做什么](#它做什么) │ [快速开始](#quickstart) │ [评测结果](#evals) │ [已知边界](#limits) │ [结构](#结构)
+
+</div>
 
 > 将真实部署过的 AWS IoT 漏水监控系统重构为 AI 原生事故自动化平台:
 > 确定性引擎负责检测与响应执行; AI 负责把自然语言运营规则编译为
 > **经验证、可模拟、需审批**的响应策略, 并为已解决事故生成可审计报告。
+
+## 核心特性
+
+- **自然语言 → 受限 DSL 策略**: Agent 先查区域、传感器与在册角色, 再写策略草稿; 信息不足时停下追问, 人回答后同一任务原地续跑。
+- **发布前先回放**: 草案在 344 条真实历史读数 (装载成 1258 个事件) 上模拟, 触发次数与分布摆在审批人面前。
+- **审批由数据库强制**: 发布记录的 `approval_id` 是 NOT NULL 外键, 没有审批记录就插不进去; 提交人不能批自己的策略。
+- **评测可离线重算**: 100 条评测集、六类确定性 grader、五组消融, 出厂配置 macro 成功率 73% (基线 35%), 每个数字带 run_id。
 
 ## 它做什么
 
@@ -71,6 +91,9 @@ docker compose --profile demo up device-sim
 
 ### 演示账号 (种子自动写入)
 
+<details>
+<summary>展开演示账号</summary>
+
 | 邮箱 | 密码 | 角色 |
 |---|---|---|
 | `admin@example.com` | `sentinel-demo` | admin (不绑现场员工) |
@@ -82,6 +105,8 @@ docker compose --profile demo up device-sim
 `POST /auth/login` 登录后会话放在 httpOnly cookie 里, 浏览器里的 `/docs` 直接可用;
 curl 场景可从登录响应的 `Set-Cookie` 取 token, 以 `Authorization: Bearer` 请求头携带。
 员工 Bo Wang 刻意没有账号: 他只在现场刷卡, 从不登录 (见 SPEC-004)。
+
+</details>
 
 ## 当前进度
 
@@ -114,6 +139,9 @@ Agent 写草稿、提审批本来就要写库。改成上面这版之后, 它从
 上一节讲的是同一件事的另一半: 事故报告 (SPEC-008) 里, 每一个数字与每一个专名都由
 代码从数据库查成"事实包"、经 `{{占位符}}` 渲染进正文 —— 模型在**语法上**写不出
 一个自由数字或人名。那还要模型干什么? 下面把**同一条事故**的两份报告并排摆出来。
+
+<details>
+<summary>展开两份报告的完整对照</summary>
 
 **先把口径钉死: 这是一个例子, 不是一个统计量。** 报告的评测集已砍
 (理由见 [SPEC-008](docs/specs/SPEC-008-incident-report.md) 第六节), 所以没有
@@ -220,6 +248,8 @@ suggestion:
 拦不住** —— 把"响应时长"塞进"处理时长"那句话, 校验器不报错; 测它需要答案键,
 已随评测集一起砍掉。被问到照实说, 完整清单见文末"已知边界"。
 
+</details>
+
 ## 结构
 
 | 路径 | 内容 |
@@ -231,6 +261,8 @@ suggestion:
 | `evals/` | 100 条评测集 + 确定性 grader + 消融实验 |
 | `docs/` | specs / ADR / AWS 映射 / AI 研发证据链 |
 | `legacy/` | 原 AWS 系统 (8 Lambda + IaC 备份), 只读证据 |
+
+<a name="evals"></a>
 
 ## 指标 (evals 实测, 每个数字带产生它的配置与 run_id)
 
@@ -261,6 +293,9 @@ suggestion:
 | **macro (每类等权)** | 35% | 47% | **73%** | 63% |
 | micro (每条等权) | 38% | 49% | **71%** | 66% |
 
+<details>
+<summary>展开读表说明与实验配置</summary>
+
 三句读表的话, 都是照实说, 不是免责声明:
 
 1. **A0 / A1 里有 24 条是结构性的 0** (`ambiguous` 16 + `capability_gap` 8):
@@ -283,9 +318,14 @@ suggestion:
 [`evals/COST.md`](evals/COST.md), **含作废与重跑的那部分** ——
 "跑一轮消融的真实成本包含重跑"比"一轮 ¥18"诚实。
 
+</details>
+
 ### W4 实测的几个 (接上真实模型才量得到)
 
 配置随数字一起给, 否则复现不了也就核对不了:
+
+<details>
+<summary>展开 W4 实测数据</summary>
 
 | | 值 | 产生它的配置 |
 |---|---|---|
@@ -297,9 +337,14 @@ suggestion:
 当时写的是"关掉思考是一个取舍不是结论, W5 会把它单独作为一组正经比一次" ——
 **W5 比了 (C2 那一组), 结论在上面第 2 条**: 不是"开着更慢一点", 是**按出厂预算根本跑不完**。
 
+</details>
+
 ### 降档的代价: 省一半钱, 掉的不只是分数
 
 `L2` 与 `C1` 是同一套出厂配置、同一份 100 条评测集, **只换模型档位** (pro → turbo):
+
+<details>
+<summary>展开降档实验详情</summary>
 
 | | L2 (pro) | C1 (turbo) |
 |---|---|---|
@@ -332,6 +377,10 @@ suggestion:
 第 3 节; 配置: `doubao-seed-2-1-pro-260628` / `-turbo-260628`, prompt v3, 思考关,
 温度 0, 数据集 v1.3, 各 100 条。
 
+</details>
+
+<a name="limits"></a>
+
 ## 已知边界 (交付时就知道、没修的)
 
 - **用户只肯说"你看着办", 系统会问到耗尽然后失败。** 模型缺信息时会追问 (这是对的),
@@ -343,6 +392,9 @@ suggestion:
   还是坦白说"这个我不能替你定"。目前两者都没做。
   没有顺手把评测里的兜底话改成一个具体默认值来让这一格好看:
   那样会抬高分数, 而抬起来的部分不对应任何真实能力提升 (SPEC-007 补入 39)。
+
+<details>
+<summary>展开事故报告占位符机制的边界 (5 条)</summary>
 
 以下几条是事故报告的占位符机制 (SPEC-008) 的边界, 照 SPEC 文末原样列出:
 
@@ -362,6 +414,8 @@ suggestion:
 - **"用了对的占位符但放错句子"现在没有任何东西测得出来。** 校验器拦得住编造与
   悬空引用, 拦不住错配 (把"响应时长"塞进"处理时长"那句话)。测它要答案键,
   已随报告评测集一起砍掉 (SPEC-008 第六节)。这是交付时就知道的洞, 被问到照实说。
+
+</details>
 
 ## 数据来源
 
